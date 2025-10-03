@@ -58,7 +58,6 @@ coverage/
 .replit
 .clinerules
 replit.*
-AGENTS.md
 CLAUDE.md
 
 .env.*

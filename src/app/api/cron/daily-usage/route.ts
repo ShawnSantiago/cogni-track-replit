@@ -29,7 +29,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log('Starting daily usage fetch cron job');
+    const flagState = (process.env.ENABLE_DAILY_USAGE_WINDOWS ?? 'false').toLowerCase() === 'true';
+    console.log('Starting daily usage fetch cron job', {
+      dailyWindowsEnabled: flagState,
+    });
 
     // Import database dependencies
     const { getDb } = await import('../../../../lib/database');
@@ -44,12 +47,33 @@ export async function GET(request: NextRequest) {
     let successCount = 0;
     let errorCount = 0;
     let warningCount = 0;
+    const telemetrySummary = {
+      processedUsers: allUsers.length,
+      processedKeys: 0,
+      simulatedKeys: 0,
+      failedKeys: 0,
+      storedEvents: 0,
+      updatedEvents: 0,
+      windowsProcessed: 0,
+      issuesByCode: new Map<string, number>(),
+    };
 
     // Process each user
     for (const user of allUsers) {
       try {
         const telemetry = await fetchAndStoreUsageForUser(user.id, 1); // Fetch last 1 day
         successCount++;
+        telemetrySummary.processedKeys += telemetry.processedKeys;
+        telemetrySummary.simulatedKeys += telemetry.simulatedKeys;
+        telemetrySummary.failedKeys += telemetry.failedKeys;
+        telemetrySummary.storedEvents += telemetry.storedEvents;
+        telemetrySummary.updatedEvents += telemetry.updatedEvents;
+        telemetrySummary.windowsProcessed += telemetry.windowsProcessed;
+        for (const issue of telemetry.issues) {
+          const code = issue.code ?? 'UNKNOWN';
+          const current = telemetrySummary.issuesByCode.get(code) ?? 0;
+          telemetrySummary.issuesByCode.set(code, current + 1);
+        }
         if (telemetry.issues.length > 0) {
           warningCount += telemetry.issues.length;
           console.warn('Usage ingestion completed with issues', { userId: user.id, telemetry });
@@ -62,6 +86,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const issuesByCode = Object.fromEntries(telemetrySummary.issuesByCode.entries());
+
     const result = {
       success: true,
       processed: allUsers.length,
@@ -69,6 +95,16 @@ export async function GET(request: NextRequest) {
       errors: errorCount,
       warningCount,
       timestamp: new Date().toISOString(),
+      telemetry: {
+        processedUsers: telemetrySummary.processedUsers,
+        processedKeys: telemetrySummary.processedKeys,
+        simulatedKeys: telemetrySummary.simulatedKeys,
+        failedKeys: telemetrySummary.failedKeys,
+        storedEvents: telemetrySummary.storedEvents,
+        updatedEvents: telemetrySummary.updatedEvents,
+        windowsProcessed: telemetrySummary.windowsProcessed,
+        issuesByCode,
+      },
     };
 
     console.log('Daily usage fetch completed:', result);

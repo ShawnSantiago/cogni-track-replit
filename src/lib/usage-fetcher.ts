@@ -1,7 +1,8 @@
 import { decrypt } from './encryption';
 import { getDb } from './database';
 import { providerKeys, usageEvents } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
+import type { IndexColumn } from 'drizzle-orm/pg-core/indexes';
 
 type OpenAIUsageMode = 'standard' | 'admin';
 
@@ -24,6 +25,20 @@ interface OpenAIAdminResultItem {
   output_tokens?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
+  num_model_requests?: number;
+  service_tier?: string;
+  batch?: boolean;
+  input_cached_tokens?: number;
+  input_uncached_tokens?: number;
+  input_text_tokens?: number;
+  output_text_tokens?: number;
+  input_cached_text_tokens?: number;
+  input_audio_tokens?: number;
+  input_cached_audio_tokens?: number;
+  output_audio_tokens?: number;
+  input_image_tokens?: number;
+  input_cached_image_tokens?: number;
+  output_image_tokens?: number;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -34,6 +49,14 @@ interface OpenAIAdminResultItem {
 interface OpenAIAdminUsageRecord {
   start_time?: number;
   start_time_iso?: string;
+  end_time?: number;
+  end_time_iso?: string;
+  project_id?: string;
+  api_key_id?: string;
+  user_id?: string;
+  service_tier?: string;
+  batch?: boolean;
+  num_model_requests?: number;
   results?: OpenAIAdminResultItem[];
 }
 
@@ -55,6 +78,61 @@ export interface UsageEventData {
   timestamp: Date;
   pricingKey?: string;
   pricingFallback?: boolean;
+  windowStart?: Date;
+  windowEnd?: Date;
+  projectId?: string;
+  openaiUserId?: string;
+  openaiApiKeyId?: string;
+  serviceTier?: string;
+  batch?: boolean;
+  numModelRequests?: number;
+  inputCachedTokens?: number;
+  inputUncachedTokens?: number;
+  inputTextTokens?: number;
+  outputTextTokens?: number;
+  inputCachedTextTokens?: number;
+  inputAudioTokens?: number;
+  inputCachedAudioTokens?: number;
+  outputAudioTokens?: number;
+  inputImageTokens?: number;
+  inputCachedImageTokens?: number;
+  outputImageTokens?: number;
+}
+
+interface UsageWindow {
+  start: Date;
+  end: Date;
+}
+
+type FailureMarkedError = Error & { _usageFailureCounted?: boolean };
+
+function markUsageFailureAsCounted(error: unknown): Error {
+  const normalizedError = error instanceof Error ? error : new Error(String(error));
+  (normalizedError as FailureMarkedError)._usageFailureCounted = true;
+  return normalizedError;
+}
+
+type DateInput = Date | string | number;
+
+export interface FetchUsageOptions {
+  startDate?: DateInput;
+  endDate?: DateInput;
+  runLabel?: string;
+}
+
+function parseDateInput(value?: DateInput): Date | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed =
+    value instanceof Date ? new Date(value.getTime()) : new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error('[usage-fetcher] Invalid usage ingestion date input');
+  }
+
+  return parsed;
 }
 
 export interface IngestionIssue {
@@ -71,6 +149,8 @@ export interface IngestionTelemetry {
   failedKeys: number;
   storedEvents: number;
   skippedEvents: number;
+  updatedEvents: number;
+  windowsProcessed: number;
   issues: IngestionIssue[];
 }
 
@@ -95,6 +175,8 @@ const ADMIN_THROTTLE_TIMEOUT_MS = Math.max(
   1000,
   asFiniteNumber(process.env.OPENAI_ADMIN_THROTTLE_TIMEOUT_MS, 60000)
 );
+const ENABLE_DAILY_USAGE_WINDOWS =
+  (process.env.ENABLE_DAILY_USAGE_WINDOWS ?? 'false').toLowerCase() === 'true';
 
 type TokenPricing = {
   input: number;
@@ -142,6 +224,271 @@ const PRICING_FALLBACK_WARNINGS = new Set<string>();
 let adminThrottleQueue: Promise<void> = Promise.resolve();
 let adminTokens = ADMIN_MAX_BURST;
 let adminLastRefill = Date.now();
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const USAGE_ADMIN_BUCKET_CONSTRAINT_NAME = 'usage_admin_bucket_idx' as const;
+const CONSTRAINT_MISSING_SQLSTATE_CODES = new Set(['42P10', '42704']);
+
+type UsageEventInsert = typeof usageEvents.$inferInsert;
+
+const DRIZZLE_EXTRA_CONFIG_BUILDER = Symbol.for('drizzle:ExtraConfigBuilder');
+const DRIZZLE_EXTRA_CONFIG_COLUMNS = Symbol.for('drizzle:ExtraConfigColumns');
+
+function resolveUsageAdminBucketConstraint(): IndexColumn[] | undefined {
+  const extraConfigBuilder = (usageEvents as Record<symbol, unknown>)[DRIZZLE_EXTRA_CONFIG_BUILDER];
+  if (typeof extraConfigBuilder !== 'function') {
+    return undefined;
+  }
+
+  const extraConfigColumns = (usageEvents as Record<symbol, unknown>)[DRIZZLE_EXTRA_CONFIG_COLUMNS];
+  try {
+    const extraConfig = (extraConfigBuilder as (columns: unknown) => unknown)(extraConfigColumns);
+    const maybeBuilder =
+      extraConfig && typeof extraConfig === 'object'
+        ? Array.isArray(extraConfig)
+          ? extraConfig.find(
+              (entry): entry is { config?: { name?: string; columns?: IndexColumn[] } } & {
+                build?: (table: typeof usageEvents) => { config?: { columns?: IndexColumn[] } };
+              } =>
+                !!entry &&
+                typeof entry === 'object' &&
+                'config' in entry &&
+                (entry as { config?: { name?: string } }).config?.name === USAGE_ADMIN_BUCKET_CONSTRAINT_NAME
+            )
+          : (extraConfig as Record<string, unknown>)[
+              'usageAdminBucketIdx'
+            ]
+        : undefined;
+
+    if (!maybeBuilder || typeof maybeBuilder !== 'object') {
+      return undefined;
+    }
+
+    if (typeof (maybeBuilder as { build?: unknown }).build === 'function') {
+      const built = (maybeBuilder as {
+        build: (table: typeof usageEvents) => { config?: { columns?: IndexColumn[] } };
+      }).build(usageEvents);
+      return built?.config?.columns as IndexColumn[] | undefined;
+    }
+
+    const columns = (maybeBuilder as { config?: { columns?: IndexColumn[] } }).config?.columns;
+    return columns as IndexColumn[] | undefined;
+  } catch (error) {
+    console.warn('[usage-fetcher] Failed to resolve usage_admin_bucket_idx metadata', {
+      error: error instanceof Error ? error.message : error,
+    });
+    return undefined;
+  }
+}
+
+const usageAdminBucketConstraint = resolveUsageAdminBucketConstraint();
+
+let loggedMissingUsageConstraint = false;
+
+function isUsageConstraintMissingError(error: unknown): error is { code?: string } {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && CONSTRAINT_MISSING_SQLSTATE_CODES.has(code);
+}
+
+function logMissingUsageConstraintOnce(reason: 'metadata-missing' | 'constraint-missing', error?: unknown) {
+  if (loggedMissingUsageConstraint) {
+    return;
+  }
+
+  const details: Record<string, unknown> = { reason };
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    const maybeCode = (error as { code?: unknown }).code;
+    if (typeof maybeMessage === 'string') {
+      details.message = maybeMessage;
+    }
+    if (typeof maybeCode === 'string') {
+      details.code = maybeCode;
+    }
+  }
+
+  console.warn(
+    `[usage-fetcher] ${USAGE_ADMIN_BUCKET_CONSTRAINT_NAME} missing; using manual dedupe fallback`,
+    details
+  );
+  loggedMissingUsageConstraint = true;
+}
+
+const usageEventColumnsForUpdate = [
+  'tokensIn',
+  'tokensOut',
+  'costEstimate',
+  'timestamp',
+  'windowEnd',
+  'projectId',
+  'openaiUserId',
+  'openaiApiKeyId',
+  'serviceTier',
+  'batch',
+  'numModelRequests',
+  'inputCachedTokens',
+  'inputUncachedTokens',
+  'inputTextTokens',
+  'outputTextTokens',
+  'inputCachedTextTokens',
+  'inputAudioTokens',
+  'inputCachedAudioTokens',
+  'outputAudioTokens',
+  'inputImageTokens',
+  'inputCachedImageTokens',
+  'outputImageTokens',
+] as const satisfies readonly (keyof UsageEventInsert)[];
+
+type UpdatableUsageEventColumn = (typeof usageEventColumnsForUpdate)[number];
+type UsageEventUpdatePayload = Partial<Pick<UsageEventInsert, UpdatableUsageEventColumn>>;
+
+function toNullable<T>(value: T | null | undefined): T | null {
+  return value ?? null;
+}
+
+function deriveWindowBounds(usage: UsageEventData): { windowStart: Date; windowEnd: Date } {
+  const windowStart = usage.windowStart ?? startOfDayUtc(usage.timestamp);
+  const windowEnd = usage.windowEnd ?? addDays(windowStart, 1);
+  return { windowStart, windowEnd };
+}
+
+function buildUsageEventInsertPayload(
+  keyId: number,
+  usage: UsageEventData
+): UsageEventInsert {
+  const { windowStart, windowEnd } = deriveWindowBounds(usage);
+  const costEstimateNumber =
+    typeof usage.costEstimate === 'number' ? usage.costEstimate : Number(usage.costEstimate ?? 0);
+  const costEstimate = Number.isFinite(costEstimateNumber) ? costEstimateNumber : 0;
+
+  return {
+    keyId,
+    model: usage.model,
+    tokensIn: usage.tokensIn,
+    tokensOut: usage.tokensOut,
+    costEstimate: costEstimate.toFixed(6),
+    timestamp: usage.timestamp,
+    windowStart,
+    windowEnd,
+    projectId: toNullable(usage.projectId),
+    openaiUserId: toNullable(usage.openaiUserId),
+    openaiApiKeyId: toNullable(usage.openaiApiKeyId),
+    serviceTier: toNullable(usage.serviceTier),
+    batch: toNullable(usage.batch),
+    numModelRequests: toNullable(usage.numModelRequests),
+    inputCachedTokens: toNullable(usage.inputCachedTokens),
+    inputUncachedTokens: toNullable(usage.inputUncachedTokens),
+    inputTextTokens: toNullable(usage.inputTextTokens),
+    outputTextTokens: toNullable(usage.outputTextTokens),
+    inputCachedTextTokens: toNullable(usage.inputCachedTextTokens),
+    inputAudioTokens: toNullable(usage.inputAudioTokens),
+    inputCachedAudioTokens: toNullable(usage.inputCachedAudioTokens),
+    outputAudioTokens: toNullable(usage.outputAudioTokens),
+    inputImageTokens: toNullable(usage.inputImageTokens),
+    inputCachedImageTokens: toNullable(usage.inputCachedImageTokens),
+    outputImageTokens: toNullable(usage.outputImageTokens),
+  } satisfies UsageEventInsert;
+}
+
+function buildUsageEventMatchClause(payload: UsageEventInsert) {
+  if (!payload.windowStart || !payload.windowEnd) {
+    throw new Error('[usage-fetcher] Manual dedupe fallback requires window boundaries.');
+  }
+
+  const windowStart = payload.windowStart;
+  const windowEnd = payload.windowEnd;
+  const normalizedProjectId = payload.projectId ?? '';
+  const normalizedApiKeyId = payload.openaiApiKeyId ?? '';
+  const normalizedUserId = payload.openaiUserId ?? '';
+  const normalizedServiceTier = payload.serviceTier ?? '';
+  const normalizedBatch = payload.batch ?? false;
+
+  // The uniqueness contract deliberately excludes token counts so refreshed
+  // exports can update an existing window instead of inserting duplicates.
+  return and(
+    eq(usageEvents.keyId, payload.keyId),
+    eq(usageEvents.model, payload.model),
+    eq(usageEvents.windowStart, windowStart),
+    eq(usageEvents.windowEnd, windowEnd),
+    sql`COALESCE(${usageEvents.projectId}, '') = ${normalizedProjectId}`,
+    sql`COALESCE(${usageEvents.openaiApiKeyId}, '') = ${normalizedApiKeyId}`,
+    sql`COALESCE(${usageEvents.openaiUserId}, '') = ${normalizedUserId}`,
+    sql`COALESCE(${usageEvents.serviceTier}, '') = ${normalizedServiceTier}`,
+    sql`COALESCE(${usageEvents.batch}, false) = ${normalizedBatch}`
+  );
+}
+
+async function upsertUsageEventWithManualDedupe(
+  db: ReturnType<typeof getDb>,
+  payload: UsageEventInsert,
+  updatePayload: UsageEventUpdatePayload
+): Promise<'inserted' | 'updated'> {
+  const manualInsertBuilder = db.insert(usageEvents).values(payload);
+
+  const [existing] = await db
+    .select({ id: usageEvents.id })
+    .from(usageEvents)
+    .where(buildUsageEventMatchClause(payload))
+    .limit(1);
+
+  if (!existing) {
+    const [result] = await manualInsertBuilder.returning({ inserted: sql<boolean>`(xmax = 0)` });
+
+    return result?.inserted ? 'inserted' : 'updated';
+  }
+
+  const hasUpdates = usageEventColumnsForUpdate.some((key) => key in updatePayload);
+  if (!hasUpdates) {
+    return 'updated';
+  }
+
+  await db
+    .update(usageEvents)
+    .set(updatePayload)
+    .where(eq(usageEvents.id, existing.id));
+
+  return 'updated';
+}
+
+async function upsertUsageEvent(
+  db: ReturnType<typeof getDb>,
+  payload: UsageEventInsert
+): Promise<'inserted' | 'updated'> {
+  const updatePayload = Object.fromEntries(
+    usageEventColumnsForUpdate.flatMap((key) => {
+      const value = payload[key];
+      return value === undefined ? [] : ([[key, value]] as const);
+    })
+  ) as UsageEventUpdatePayload;
+
+  if (usageAdminBucketConstraint) {
+    try {
+      const [result] = await db
+        .insert(usageEvents)
+        .values(payload)
+        .onConflictDoUpdate({
+          target: usageAdminBucketConstraint,
+          set: updatePayload,
+        })
+        .returning({ inserted: sql<boolean>`(xmax = 0)` });
+
+      return result?.inserted ? 'inserted' : 'updated';
+    } catch (error) {
+      if (!isUsageConstraintMissingError(error)) {
+        throw error;
+      }
+
+      logMissingUsageConstraintOnce('constraint-missing', error);
+    }
+  } else {
+    logMissingUsageConstraintOnce('metadata-missing');
+  }
+
+  return upsertUsageEventWithManualDedupe(db, payload, updatePayload);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -272,6 +619,14 @@ function safeNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function optionalNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 function decryptKeyMetadata(record: typeof providerKeys.$inferSelect): { organizationId?: string; projectId?: string } {
   if (!record.encryptedMetadata || !record.metadataIv || !record.metadataAuthTag) {
     return {};
@@ -316,6 +671,32 @@ function asDate(epochSeconds?: number, fallback?: Date): Date {
   }
   const millis = epochSeconds < 1e12 ? epochSeconds * 1000 : epochSeconds;
   return new Date(millis);
+}
+
+function startOfDayUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function buildDailyWindows(startDate: Date, endDate: Date): UsageWindow[] {
+  if (startDate > endDate) {
+    return [];
+  }
+
+  const windows: UsageWindow[] = [];
+  let cursor = startOfDayUtc(startDate);
+  const lastStart = startOfDayUtc(endDate);
+
+  while (cursor <= lastStart) {
+    const windowEnd = addDays(cursor, 1);
+    windows.push({ start: cursor, end: windowEnd });
+    cursor = windowEnd;
+  }
+
+  return windows;
 }
 
 function parseRetryAfter(header: string | null): number | null {
@@ -395,7 +776,19 @@ function extractModelFromAdminItem(item: OpenAIAdminResultItem): string {
   return 'unknown';
 }
 
-function normalizeAdminResults(results: OpenAIAdminResultItem[], timestamp: Date): UsageEventData[] {
+interface AdminUsageContext {
+  timestamp: Date;
+  windowStart: Date;
+  windowEnd: Date;
+  projectId?: string;
+  openaiApiKeyId?: string;
+  openaiUserId?: string;
+  serviceTier?: string;
+  batch?: boolean;
+  numModelRequests?: number;
+}
+
+function normalizeAdminResults(results: OpenAIAdminResultItem[], context: AdminUsageContext): UsageEventData[] {
   return results.map((item) => {
     const model = extractModelFromAdminItem(item);
     const tokensIn = safeNumber(item.input_tokens ?? item.prompt_tokens ?? item.usage?.prompt_tokens ?? 0);
@@ -414,7 +807,26 @@ function normalizeAdminResults(results: OpenAIAdminResultItem[], timestamp: Date
       tokensIn,
       tokensOut,
       costEstimate: Number(cost.toFixed(6)),
-      timestamp,
+      timestamp: context.timestamp,
+      windowStart: context.windowStart,
+      windowEnd: context.windowEnd,
+      projectId: context.projectId,
+      openaiApiKeyId: context.openaiApiKeyId,
+      openaiUserId: context.openaiUserId,
+      serviceTier: item.service_tier ?? context.serviceTier,
+      batch: item.batch ?? context.batch,
+      numModelRequests: optionalNumber(item.num_model_requests) ?? context.numModelRequests,
+      inputCachedTokens: optionalNumber(item.input_cached_tokens),
+      inputUncachedTokens: optionalNumber(item.input_uncached_tokens),
+      inputTextTokens: optionalNumber(item.input_text_tokens),
+      outputTextTokens: optionalNumber(item.output_text_tokens),
+      inputCachedTextTokens: optionalNumber(item.input_cached_text_tokens),
+      inputAudioTokens: optionalNumber(item.input_audio_tokens),
+      inputCachedAudioTokens: optionalNumber(item.input_cached_audio_tokens),
+      outputAudioTokens: optionalNumber(item.output_audio_tokens),
+      inputImageTokens: optionalNumber(item.input_image_tokens),
+      inputCachedImageTokens: optionalNumber(item.input_cached_image_tokens),
+      outputImageTokens: optionalNumber(item.output_image_tokens),
     };
     if (pricingKey !== undefined || pricingFallback !== undefined) {
       usageEvent.pricingKey = pricingKey;
@@ -491,16 +903,34 @@ async function fetchAdminUsage(
   for (const page of pages) {
     const records = Array.isArray(page.data) ? page.data : [];
     for (const record of records) {
-      const timestamp = record.start_time_iso ? new Date(record.start_time_iso) : asDate(record.start_time, startDate);
+      const windowStart = record.start_time_iso ? new Date(record.start_time_iso) : asDate(record.start_time, startDate);
+      const windowEnd = record.end_time_iso ? new Date(record.end_time_iso) : addDays(windowStart, 1);
       const results = Array.isArray(record.results) ? record.results : [];
-      events.push(...normalizeAdminResults(results, timestamp));
+      const context: AdminUsageContext = {
+        timestamp: windowStart,
+        windowStart,
+        windowEnd,
+        projectId: record.project_id ?? undefined,
+        openaiApiKeyId: record.api_key_id ?? undefined,
+        openaiUserId: record.user_id ?? undefined,
+        serviceTier: record.service_tier ?? undefined,
+        batch: record.batch ?? undefined,
+        numModelRequests: optionalNumber(record.num_model_requests),
+      };
+      events.push(...normalizeAdminResults(results, context));
     }
 
     const dailyCosts = Array.isArray(page.daily_costs) ? page.daily_costs : [];
     for (const daily of dailyCosts) {
-      const timestamp = asDate((daily as any)?.timestamp, startDate);
+      const windowStart = asDate((daily as any)?.timestamp, startDate);
+      const windowEnd = addDays(windowStart, 1);
       const items = Array.isArray((daily as any)?.line_items) ? (daily as any).line_items! : [];
-      events.push(...normalizeAdminResults(items, timestamp));
+      const context: AdminUsageContext = {
+        timestamp: windowStart,
+        windowStart,
+        windowEnd,
+      };
+      events.push(...normalizeAdminResults(items, context));
     }
   }
 
@@ -533,13 +963,18 @@ async function fetchStandardUsage(apiKey: string, startDate: Date, endDate: Date
     const inputTokens = usage.n_context_tokens_total || 0;
     const outputTokens = usage.n_generated_tokens_total || 0;
     const { amount, pricingKey, fallback } = calculateCost(model, inputTokens, outputTokens);
+    const timestamp = new Date(usage.aggregation_timestamp * 1000);
+    const windowStart = startOfDayUtc(timestamp);
+    const windowEnd = addDays(windowStart, 1);
 
     return {
       model,
       tokensIn: inputTokens,
       tokensOut: outputTokens,
       costEstimate: Number(amount.toFixed(6)),
-      timestamp: new Date(usage.aggregation_timestamp * 1000),
+      timestamp,
+      windowStart,
+      windowEnd,
       pricingKey,
       pricingFallback: fallback,
     };
@@ -570,6 +1005,7 @@ function generateSimulatedUsage(startDate: Date, endDate: Date): UsageEventData[
     const tokensOut = Math.floor(Math.random() * 1500) + 100;
     const { amount, pricingKey, fallback } = calculateCost(model, tokensIn, tokensOut);
     const ts = new Date(startDate.getTime() + Math.random() * duration);
+    const windowStart = startOfDayUtc(ts);
 
     events.push({
       model,
@@ -577,6 +1013,8 @@ function generateSimulatedUsage(startDate: Date, endDate: Date): UsageEventData[
       tokensOut,
       costEstimate: Number(amount.toFixed(6)),
       timestamp: ts,
+      windowStart,
+      windowEnd: addDays(windowStart, 1),
       pricingKey,
       pricingFallback: fallback,
     });
@@ -587,8 +1025,10 @@ function generateSimulatedUsage(startDate: Date, endDate: Date): UsageEventData[
 
 export async function fetchAndStoreUsageForUser(
   userId: string,
-  daysBack: number = 1
+  daysBack: number = 1,
+  options: FetchUsageOptions = {}
 ): Promise<IngestionTelemetry> {
+  let runLabel: string | undefined;
   try {
     const db = getDb();
     const userKeys = await db
@@ -603,18 +1043,42 @@ export async function fetchAndStoreUsageForUser(
       failedKeys: 0,
       storedEvents: 0,
       skippedEvents: 0,
+      updatedEvents: 0,
+      windowsProcessed: 0,
       issues: [],
     };
 
+    const overrideEnd = parseDateInput(options.endDate);
+    const overrideStart = parseDateInput(options.startDate);
+    const endDate = overrideEnd ?? new Date();
+    const startDate =
+      overrideStart ?? new Date(endDate.getTime() - Math.max(daysBack, 1) * MS_PER_DAY);
+
+    if (startDate > endDate) {
+      throw new Error('[usage-fetcher] startDate must be on or before endDate');
+    }
+
+    runLabel = options.runLabel;
+
     if (userKeys.length === 0) {
-      console.log(`[usage-fetcher] No OpenAI keys for user`, { userId });
+      console.log(`[usage-fetcher] No OpenAI keys for user`, {
+        userId,
+        ...(runLabel ? { runLabel } : {}),
+      });
       return telemetry;
     }
 
-    const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - daysBack * 24 * 60 * 60 * 1000);
+    if (runLabel || overrideStart || overrideEnd) {
+      console.log('[usage-fetcher] Starting usage ingestion window', {
+        userId,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        ...(runLabel ? { runLabel } : {}),
+      });
+    }
 
     for (const keyRecord of userKeys) {
+      let usedSimulation = false;
       try {
         const decryptedKey = decrypt({
           encryptedText: keyRecord.encryptedKey,
@@ -623,110 +1087,139 @@ export async function fetchAndStoreUsageForUser(
         });
 
         const usageConfig = deriveUsageConfigurationForKey(keyRecord);
-        let usageData: UsageEventData[] = [];
-        let usedSimulation = false;
-        try {
-          usageData = await fetchOpenAIUsage(decryptedKey, startDate, endDate, usageConfig);
-        } catch (error) {
-          if (error instanceof UsageConfigurationError) {
-            telemetry.failedKeys += 1;
-            telemetry.issues.push({
-              keyId: keyRecord.id,
-              message: error.message,
-              code: 'CONFIGURATION_ERROR',
-            });
-            console.error('[usage-fetcher] Missing configuration for admin usage mode', {
-              userId,
-              keyId: keyRecord.id,
-              error: error.message,
-            });
-            continue;
-          }
-          if (error instanceof OpenAIUsageError && (error.code === 'SCOPE_MISSING' || error.code === 'UNAUTHORIZED')) {
-            if (ENABLE_SIMULATED_USAGE) {
+        const windowRanges = ENABLE_DAILY_USAGE_WINDOWS
+          ? buildDailyWindows(startDate, endDate)
+          : [{ start: startDate, end: endDate }];
+
+        let newEventsCount = 0;
+        let updatedEventsCount = 0;
+        let totalFetched = 0;
+        let processedWindows = 0;
+        const fallbackModels = new Set<string>();
+        let skipKey = false;
+
+        for (const windowRange of windowRanges) {
+          let usageData: UsageEventData[] = [];
+          let usedSimulationThisWindow = false;
+          try {
+            usageData = await fetchOpenAIUsage(decryptedKey, windowRange.start, windowRange.end, usageConfig);
+          } catch (error) {
+            if (error instanceof UsageConfigurationError) {
+              telemetry.failedKeys += 1;
               telemetry.issues.push({
                 keyId: keyRecord.id,
                 message: error.message,
-                code: error.code,
+                code: 'CONFIGURATION_ERROR',
               });
-              usedSimulation = true;
-              telemetry.simulatedKeys += 1;
-              console.warn(`[usage-fetcher] OpenAI permissions issue; using simulated data`, {
+              console.error('[usage-fetcher] Missing configuration for admin usage mode', {
                 userId,
                 keyId: keyRecord.id,
-                code: error.code,
+                windowStart: windowRange.start.toISOString(),
+                error: error.message,
+                ...(runLabel ? { runLabel } : {}),
               });
-              usageData = generateSimulatedUsage(startDate, endDate);
-            } else {
+              skipKey = true;
+              break;
+            }
+            if (error instanceof OpenAIUsageError && (error.code === 'SCOPE_MISSING' || error.code === 'UNAUTHORIZED')) {
+              if (ENABLE_SIMULATED_USAGE) {
+                telemetry.issues.push({
+                  keyId: keyRecord.id,
+                  message: error.message,
+                  code: error.code,
+                });
+                usedSimulation = true;
+                usedSimulationThisWindow = true;
+                console.warn(`[usage-fetcher] OpenAI permissions issue; using simulated data`, {
+                  userId,
+                  keyId: keyRecord.id,
+                  code: error.code,
+                  windowStart: windowRange.start.toISOString(),
+                  ...(runLabel ? { runLabel } : {}),
+                });
+                usageData = generateSimulatedUsage(windowRange.start, windowRange.end);
+              } else {
               console.error(`[usage-fetcher] OpenAI permissions issue; aborting ingestion`, {
                 userId,
                 keyId: keyRecord.id,
                 code: error.code,
+                windowStart: windowRange.start.toISOString(),
+                ...(runLabel ? { runLabel } : {}),
               });
-              throw error;
+              telemetry.failedKeys += 1;
+              throw markUsageFailureAsCounted(error);
             }
           } else {
-            telemetry.failedKeys += 1;
-            telemetry.issues.push({
-              keyId: keyRecord.id,
-              message: error instanceof Error ? error.message : 'Unknown provider error',
-            });
-            console.error(`[usage-fetcher] Unexpected provider failure`, {
-              userId,
-              keyId: keyRecord.id,
-              error: error instanceof Error ? error.message : error,
-            });
-            throw error;
+              telemetry.failedKeys += 1;
+              telemetry.issues.push({
+                keyId: keyRecord.id,
+                message: error instanceof Error ? error.message : 'Unknown provider error',
+              });
+              console.error(`[usage-fetcher] Unexpected provider failure`, {
+                userId,
+                keyId: keyRecord.id,
+                windowStart: windowRange.start.toISOString(),
+                error: error instanceof Error ? error.message : error,
+                ...(runLabel ? { runLabel } : {}),
+              });
+              throw markUsageFailureAsCounted(error);
+            }
+          }
+
+          if (skipKey) {
+            break;
+          }
+
+          if (usedSimulationThisWindow) {
+            usedSimulation = true;
+          }
+
+          totalFetched += usageData.length;
+          processedWindows += 1;
+
+          for (const usage of usageData) {
+            const insertPayload = buildUsageEventInsertPayload(keyRecord.id, usage);
+            const upsertResult = await upsertUsageEvent(db, insertPayload);
+
+            if (upsertResult === 'inserted') {
+              newEventsCount += 1;
+              telemetry.storedEvents += 1;
+            } else {
+              updatedEventsCount += 1;
+              telemetry.updatedEvents += 1;
+            }
+
+            if (usage.pricingFallback) {
+              fallbackModels.add(usage.model);
+            }
           }
         }
 
-        let newEventsCount = 0;
-        const fallbackModels = new Set<string>();
-        for (const usage of usageData) {
-          const existingEvent = await db
-            .select()
-            .from(usageEvents)
-            .where(and(
-              eq(usageEvents.keyId, keyRecord.id),
-              eq(usageEvents.model, usage.model),
-              eq(usageEvents.timestamp, usage.timestamp),
-              eq(usageEvents.tokensIn, usage.tokensIn),
-              eq(usageEvents.tokensOut, usage.tokensOut),
-            ))
-            .limit(1);
-
-          if (existingEvent.length === 0) {
-            await db.insert(usageEvents).values({
-              keyId: keyRecord.id,
-              model: usage.model,
-              tokensIn: usage.tokensIn,
-              tokensOut: usage.tokensOut,
-              costEstimate: usage.costEstimate.toFixed(6),
-              timestamp: usage.timestamp,
-            });
-            newEventsCount += 1;
-            telemetry.storedEvents += 1;
-          } else {
-            telemetry.skippedEvents += 1;
-          }
-
-          if (usage.pricingFallback) {
-            fallbackModels.add(usage.model);
-          }
+        if (skipKey) {
+          continue;
         }
+
+        telemetry.windowsProcessed += processedWindows;
 
         if (usedSimulation) {
           console.log(`[usage-fetcher] Stored simulated usage events`, {
             userId,
             keyId: keyRecord.id,
-            newEvents: newEventsCount,
+            newBuckets: newEventsCount,
+            updatedBuckets: updatedEventsCount,
+            windows: processedWindows,
+            fetched: totalFetched,
+            ...(runLabel ? { runLabel } : {}),
           });
         } else {
           console.log(`[usage-fetcher] Stored usage events`, {
             userId,
             keyId: keyRecord.id,
-            newEvents: newEventsCount,
-            duplicates: usageData.length - newEventsCount,
+            newBuckets: newEventsCount,
+            updatedBuckets: updatedEventsCount,
+            windows: processedWindows,
+            fetched: totalFetched,
+            ...(runLabel ? { runLabel } : {}),
           });
         }
 
@@ -739,26 +1232,61 @@ export async function fetchAndStoreUsageForUser(
           });
         }
       } catch (error) {
-        telemetry.failedKeys += 1;
+        const counted =
+          typeof error === 'object' &&
+          error !== null &&
+          (error as FailureMarkedError)._usageFailureCounted === true;
+        if (!counted) {
+          telemetry.failedKeys += 1;
+        }
         telemetry.issues.push({
           keyId: keyRecord.id,
           message: error instanceof Error ? error.message : 'Unknown ingestion error',
           code: error instanceof OpenAIUsageError ? error.code : undefined,
         });
+        console.error(error);
+        if (error && typeof error === 'object' && 'cause' in error) {
+          console.error('cause:', (error as { cause?: unknown }).cause);
+        }
+        if (error && typeof error === 'object') {
+          console.error('error keys:', Object.keys(error as Record<string, unknown>));
+        }
         console.error(`[usage-fetcher] Error processing key`, {
           userId,
           keyId: keyRecord.id,
           error: error instanceof Error ? error.message : error,
+          ...(runLabel ? { runLabel } : {}),
         });
+      } finally {
+        if (usedSimulation) {
+          telemetry.simulatedKeys += 1;
+        }
       }
     }
 
     return telemetry;
   } catch (error) {
-    console.error(`[usage-fetcher] Fatal ingestion error`, {
+    const message = '[usage-fetcher] Usage ingestion run failed';
+    console.error(message, {
       userId,
       error: error instanceof Error ? error.message : error,
+      ...(runLabel ? { runLabel } : {}),
     });
-    throw error;
+    if (error instanceof Error) {
+      const err = new Error(message);
+      (err as { cause?: unknown }).cause = error;
+      throw err;
+    }
+    throw new Error(`${message}: ${String(error)}`);
   }
 }
+
+export const __usageFetcherTestHooks = {
+  resetConstraintWarningFlag: () => {
+    loggedMissingUsageConstraint = false;
+  },
+  isConstraintMissingError: isUsageConstraintMissingError,
+  buildUsageEventInsertPayloadForTest: buildUsageEventInsertPayload,
+  upsertUsageEventForTest: async (db: unknown, payload: UsageEventInsert) =>
+    upsertUsageEvent(db as ReturnType<typeof getDb>, payload),
+};

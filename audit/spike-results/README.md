@@ -38,6 +38,7 @@ The generated report includes detailed event payloads (`dedupedUsage`) plus refe
 - Fixtures are sanitized snapshots dated 2025-09-29; rerun the spike whenever fixtures change.
 - Cursor metadata uses the execution timestamp; production implementation should persist `window_start`/`window_end` from scheduler context.
 - Extend the harness with additional fixture permutations (e.g., multiple pages) before shipping ingestion jobs.
+- `usage_completions_fixture_dual.json` validates that per-project/per-tier metadata produces distinct buckets; the spike now fails fast if those buckets disappear after dedupe.
 - Upcoming work: add replay coverage for embeddings, moderations, images, audio (speeches + transcriptions), vector stores, code interpreter sessions, and daily costs. Each new fixture should register in `ENDPOINTS.md` and be incorporated into the dedupe assertions prior to cron enablement.
 ## Extending the Spike for New Usage Fixtures
 

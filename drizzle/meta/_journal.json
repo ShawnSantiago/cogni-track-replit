@@ -15,6 +15,13 @@
       "when": 1759186410609,
       "tag": "0001_openai_usage_modes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1759330692836,
+      "tag": "0003_usage_event_windows",
+      "breakpoints": true
     }
   ]
 }
