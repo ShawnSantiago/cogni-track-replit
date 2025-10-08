@@ -1,19 +1,24 @@
-# Docusaurus Adoption Plan
-
-> [!NOTE]
-> This document is now maintained in the Docusaurus workspace at [`docs-site/docs/product/docusaurus-adoption-plan.md`](../docs-site/docs/product/docusaurus-adoption-plan.md). Update that file to make content changes.
+---
+id: docusaurus-adoption-plan
+title: Docusaurus Adoption Plan
+sidebar_label: Docusaurus Adoption Plan
+description: Roadmap for rolling out the CogniTrack documentation site on Docusaurus.
+---
 
 ## Objectives
+
 - Establish a developer-friendly documentation site that centralizes onboarding, architecture, and runbook content.
 - Keep documentation close to the codebase with an automated pipeline for previewing and deploying updates.
 - Provide a scalable structure for future multilingual content and versioned release notes.
 
 ## Assumptions
+
 - The project will continue to use Next.js for the application front end; Docusaurus will serve documentation only.
 - CI is available through existing pipelines (e.g., GitHub Actions) and can be extended to include documentation builds.
-- Documentation content will initially focus on existing files in the `docs/` directory and relevant knowledge from README and PRDs.
+- Documentation content will initially focus on existing files in the `docs/` directory and relevant knowledge from the README and PRDs.
 
 ## Phase 1: Foundations
+
 1. **Scaffold Docusaurus**
    - Install Docusaurus via `npx create-docusaurus@latest docs-site classic --typescript` into a new `docs-site/` folder at the repo root.
    - Choose the Classic template with TypeScript for consistency with the rest of the codebase.
@@ -26,6 +31,7 @@
    - Import existing design tokens (colors, fonts) from the Next.js app where feasible to keep brand consistency.
 
 ### Status (2025-10-07)
+
 - [x] `docs-site/` Docusaurus workspace committed with TypeScript preset and build artifacts ignored via `.gitignore`.
 - [x] Root `package.json` exposes `docs`, `docs:build`, and `docs:serve` npm scripts that delegate into the documentation workspace.
 - [x] Shared design tokens centralized in `src/styles/tokens.css` and consumed by both the Next.js app and Docusaurus theme for consistent branding.
@@ -33,6 +39,7 @@
 > ℹ️ Run `npm install --prefix docs-site` locally to generate `docs-site/package-lock.json`; registry access is blocked in the sandboxed environment.
 
 ## Phase 2: Content Migration
+
 1. **Define documentation information architecture**
    - Draft a navigation structure grouping concepts (e.g., Product Vision, Architecture, Operations) based on `PRD.md` and the documents under `docs/`.
    - Create top-level docs for onboarding, architecture overview, data models, and runbooks.
@@ -45,6 +52,7 @@
    - Update the root README to point to the Docusaurus site once deployed.
 
 ## Phase 3: Automation & Quality
+
 1. **Local developer experience**
    - Document commands for starting the docs dev server alongside the main app.
    - Optionally add an npm script that concurrently runs both Next.js and Docusaurus for full-stack previews.
@@ -56,6 +64,7 @@
    - Decide on production hosting (GitHub Pages via GitHub Actions is a default option provided by Docusaurus).
 
 ## Phase 4: Enhancements
+
 1. **Search and analytics**
    - Integrate Algolia DocSearch or a similar search provider once the documentation volume grows.
    - Add analytics (e.g., Google Analytics, PostHog) to track usage.
@@ -66,17 +75,20 @@
    - If the product roadmap includes multilingual support, configure Docusaurus i18n and establish translation workflows.
 
 ## Milestones & Deliverables
+
 - **Milestone 1:** Docusaurus scaffold committed, root scripts updated, basic theme configured.
 - **Milestone 2:** Core documentation migrated, navigation finalized, contribution guide updated.
 - **Milestone 3:** CI validation and hosting pipeline live, public docs URL shared with the team.
 - **Milestone 4:** Search/analytics integrations and advanced features (versioning, i18n) evaluated and prioritized.
 
 ## Risks & Mitigations
-- **Content divergence between README and Docusaurus**: Mitigate by keeping README concise and linking to the docs site for details.
-- **Maintenance overhead**: Assign documentation ownership and review responsibilities within the team.
-- **Build failures due to Markdown syntax**: Use linting and pre-commit hooks to flag issues early.
+
+- **Content divergence between README and Docusaurus:** Mitigate by keeping README concise and linking to the docs site for details.
+- **Maintenance overhead:** Assign documentation ownership and review responsibilities within the team.
+- **Build failures due to Markdown syntax:** Use linting and pre-commit hooks to flag issues early.
 
 ## Success Metrics
+
 - Documentation site can be built locally and in CI without errors.
 - Team onboarding time decreases, measured via feedback surveys.
 - Increased PR adherence to documentation guidelines (tracked via code review checklists).

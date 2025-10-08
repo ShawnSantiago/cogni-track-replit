@@ -15,7 +15,7 @@ export default function Home(): JSX.Element {
           </Heading>
           <p className="hero__subtitle">{siteConfig.tagline}</p>
           <div className="buttons">
-            <Link className="button button--primary" to="/docs/intro">
+            <Link className="button button--primary" to="/docs">
               Explore the docs
             </Link>
             <Link className="button button--secondary button--outline" to="/blog">

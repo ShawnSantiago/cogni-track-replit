@@ -10,8 +10,15 @@ CogniTrack Docs is the centralized home for onboarding, architecture decisions, 
 
 ## What you will find
 
-- **Product context:** Understand the CogniTrack vision, goals, and success metrics.
-- **Architecture references:** Review diagrams, data flows, and integration contracts.
-- **Runbooks:** Follow step-by-step instructions for day-to-day operations and incident response.
+- **Product context:** Understand the CogniTrack vision, goals, and success metrics in the [Product section](product/prd.md).
+- **Architecture references:** Review diagrams, data flows, and integration contracts starting with the [architecture overview](architecture/overview.md).
+- **Operations:** Follow step-by-step instructions for day-to-day operations, including [runbooks](operations/runbooks.md) and [security controls](operations/security/openai-admin-security-controls.md).
+- **Contributing:** Learn how to [submit documentation updates](contributing/documentation.md) and keep knowledge current.
 
-Get started by reading the [architecture overview](architecture/overview.md) and [operations runbooks](operations/runbooks.md). Contributions are welcome—open a pull request whenever you spot an opportunity to improve the docs.
+## Get involved
+
+1. Clone the repository and install dependencies.
+2. Run `npm run docs` from the project root to preview changes locally.
+3. Open a pull request with screenshots or diagrams when relevant.
+
+Maintaining trusted documentation is part of our Definition of Done. If you spot outdated guidance, propose an edit or file an issue so the team can triage it quickly.

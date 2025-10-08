@@ -15,8 +15,11 @@ This section curates operational playbooks for the CogniTrack platform. Each run
 
 ## Available runbooks
 
-- Deployment checklist (coming soon)
-- Cost anomaly investigation (coming soon)
-- Integrations monitoring (coming soon)
+- [Deployment checklist](deployment-checklist.md)
+- [Cost anomaly investigation](cost-anomaly-investigation.md)
+- [Integrations monitoring](integrations-monitoring.md)
+- [OpenAI Admin security controls](security/openai-admin-security-controls.md)
 
-> ⚠️ The runbook catalog is still under construction. As part of Phase 2, existing operational knowledge will migrate into this section.
+:::note Phase 2 migration
+The runbook catalog is expanding as we port existing operational knowledge into Docusaurus. If you have a Notion or Google Doc that belongs here, migrate it and open a PR.
+:::

@@ -15,12 +15,14 @@ The CogniTrack platform combines a Next.js application, serverless APIs, and dat
 ### Data access
 - Drizzle ORM coordinates access to the backing Postgres database (Neon serverless in production).
 - Schema definitions live in `src/db`, keeping types close to the application code.
+- Admin ingestion requires additional tables documented in the [OpenAI Admin data schema](openai-admin-migration-design.md).
 
 ### Observability and automation
 - Background automation is orchestrated through Vercel functions and scheduled jobs.
 - Tests and linting run through npm scripts and GitHub automation.
+- Security telemetry expectations are captured in the [admin security controls](../operations/security/openai-admin-security-controls.md).
 
 ## Next steps
-- Review the repository structure in `README.md`.
-- Follow the runbooks for day-to-day operational tasks.
-- Contribute to the docs whenever architecture changes are proposed.
+- Review the repository structure in the [Product Requirements](../product/prd.md).
+- Follow the [operations runbooks](../operations/runbooks.md) for day-to-day operational tasks.
+- Contribute to the docs whenever architecture changes are proposed; start with the [documentation contribution guide](../contributing/documentation.md).

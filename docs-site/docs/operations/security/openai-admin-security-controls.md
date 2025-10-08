@@ -1,15 +1,15 @@
-# OpenAI Admin Data – Security & Compliance Notes
-
-> [!NOTE]
-> This document is now maintained in the Docusaurus workspace at [`docs-site/docs/operations/security/openai-admin-security-controls.md`](../docs-site/docs/operations/security/openai-admin-security-controls.md). Update that file to make content changes.
+---
+id: openai-admin-security-controls
+title: OpenAI Admin Data Security & Compliance
+sidebar_label: Security & Compliance
+description: Controls and review plan for handling OpenAI Admin data within CogniTrack.
+---
 
 **Prepared:** 2025-09-29  
 **Author:** Codex agent  
-**Scope:** Tables proposed in `openai_admin_migration_design.md` + ingestion spike harness.
+**Scope:** Tables proposed in [OpenAI Admin Data Schema & Migration](../../architecture/openai-admin-migration-design.md) plus ingestion spike harness.
 
----
-
-## 1. Data Classification & Storage Controls
+## Data Classification & Storage Controls
 
 | Table / Asset | Classification | Storage Controls | Access Controls | Notes |
 | --- | --- | --- | --- | --- |
@@ -20,32 +20,32 @@
 | `openai_admin_cursors` | Internal | Plaintext | Ingestion read/write | Rotate on schema changes via `version` column. |
 | `usage_events` (admin buckets) | Confidential | Existing token/cost data | Analytics read, ingestion write | Unique index prevents duplicate cost accrual. |
 
-## 2. Encryption & Secret Handling
+## Encryption & Secret Handling
 
 - Reuse `src/lib/encryption.ts` for any workflow that temporarily holds full service-account key material. Keys are never persisted post-ingestion; only `redacted_value` strings stored.
 - Update notifier: add sanitizer to logging pipeline to redact any `redacted_value`, `fingerprint`, or `actor_email` fields before structured logging.
 - New env requirements: `OPENAI_ADMIN_AUDIT_WEBHOOK` (optional) for security notifications; document rotation policy in `integrations.md`.
 
-## 3. RBAC & Least Privilege
+## RBAC & Least Privilege
 
 - Introduce DB role `openai_admin_app` (ingestion) with write access to new tables; analytics role receives SELECT on read-only views excluding `openai_service_account_keys`.
 - API routes serving admin insights must enforce Clerk role `admin` or higher; add integration tests around `/app/admin` dashboards.
 - Background jobs executing admin sync run under dedicated queue worker identity; ensure secrets accessible only to that workload.
 
-## 4. Logging, Monitoring, and Alerting
+## Logging, Monitoring, and Alerting
 
 - Emit structured log per sync run with counts, cursor positions, and PII scrubbing status; ship to central logging with 30-day retention.
 - Add metrics: `admin_sync_failures_total`, `admin_cursor_drift_seconds`, `admin_certificate_expiring_total` (threshold 14d), `admin_service_account_keys_rotated_total`.
-- Wire alerts to SecOps Slack channel when failure count exceeds 3 in rolling hour or certificate expiry < 7 days.
+- Wire alerts to SecOps Slack channel when failure count exceeds 3 in a rolling hour or certificate expiry < 7 days.
 
-## 5. Compliance Checklist
+## Compliance Checklist
 
 - [x] Map data to existing SOC2 trust categories (availability, confidentiality).
 - [x] Confirm GDPR data subject export path (projects + memberships).
 - [ ] Verify with Legal whether service-account metadata is governed by DPAs. (Review brief circulated 2025-09-29; pending 2025-10-02 meeting.)
 - [ ] Attach security sign-off once review meeting completed (target 2025-10-02).
 
-## 6. Review Plan & Owners
+## Review Plan & Owners
 
 | Task | Owner | Target Date | Status |
 | --- | --- | --- | --- |

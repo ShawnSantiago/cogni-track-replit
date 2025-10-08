@@ -1,0 +1,33 @@
+name: Docs CI
+
+on:
+  pull_request:
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  build:
+    name: Build and link check docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.18.1
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install docs dependencies
+        run: npm install --prefix docs-site
+
+      - name: Build docs
+        run: npm run docs:build
+
+      - name: Check Markdown links
+        run: npx markdown-link-check -q -r docs-site/docs

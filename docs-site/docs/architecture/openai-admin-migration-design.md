@@ -1,23 +1,19 @@
-# OpenAI Admin Data – Schema & Migration Design
-
-> [!NOTE]
-> This document is now maintained in the Docusaurus workspace at [`docs-site/docs/architecture/openai-admin-migration-design.md`](../docs-site/docs/architecture/openai-admin-migration-design.md). Update that file to make content changes.
-
-**Prepared:** 2025-09-29  
-**Author:** Codex agent (handoff-ready)  
-**Inputs:** `audit/admin-api-fixtures/*.json`, existing Drizzle schema (`src/db/schema.ts`, `drizzle/meta/0001_snapshot.json`)
-
+---
+id: openai-admin-migration-design
+title: OpenAI Admin Data Schema & Migration
+description: Proposed Drizzle schema additions and migration ordering for ingesting OpenAI Admin resources.
 ---
 
-## 1. Objectives
+**Prepared:** 2025-09-29  
+**Author:** Codex agent (handoff-ready)
+
+## Objectives
 
 1. Persist OpenAI Admin resources (projects, memberships, service accounts, keys, certificates, usage cursors) with auditability and soft-delete semantics.
 2. Enable ingestion workers to upsert admin usage buckets into `usage_events` while tracking `next_page` cursors and replay safety.
 3. Provide security primitives for sensitive material (service-account key redactions) consistent with existing AES-GCM helpers.
 
----
-
-## 2. Source Mapping Summary
+## Source Mapping Summary
 
 | Fixture | Target Table | Notes |
 | --- | --- | --- |
@@ -29,9 +25,7 @@
 | `certificates_fixture.json` | `openai_certificates` | Include fingerprint for join with events. |
 | `certificate_events_fixture.json` | `openai_certificate_events` | Persist actor & metadata JSON for audit trails. |
 
----
-
-## 3. Proposed Drizzle Tables
+## Proposed Drizzle Tables
 
 ```ts
 // schema additions (TypeScript + Drizzle)
@@ -112,52 +106,43 @@ export const usageEventUniq = uniqueIndex('usage_admin_bucket_idx')
   .on(usageEvents.timestamp, usageEvents.model, usageEvents.keyId);
 ```
 
-**Notes**
+### Notes
+
 - All timestamps are UTC; client conversions handled upstream.
-- Import helpers: add `jsonb` and `uniqueIndex` from `drizzle-orm/pg-core` in schema module.
+- Import helpers: add `jsonb` and `uniqueIndex` from `drizzle-orm/pg-core` in the schema module.
 - `usageEventUniq` prevents duplicate inserts when admin buckets replay.
 - `openai_admin_cursors.endpoint` examples: `"usage/completions"`, `"projects"`, `"service_accounts:proj_abc123"`.
 
----
+## Migration Ordering
 
-## 4. Migration Ordering
-
-1. **Add jsonb helper import** to generated schema & update Drizzle snapshot.
+1. **Add `jsonb` helper import** to the generated schema & update the Drizzle snapshot.
 2. **Create independent tables** in order of dependencies (`openai_projects` → `openai_project_members` / `openai_service_accounts` → keys → certificates → events).
 3. **Add cursors table.**
 4. **Create unique index** on `usage_events`.
 5. **Backfill** from fixtures via idempotent scripts (dry-run first).
 6. **Enforce not-null** upgrades only after backfill verification (e.g., `status` already not null via API).
 
-Each migration stays additive; no existing data mutated until backfill confidence reached.
+Each migration stays additive; no existing data is mutated until backfill confidence is reached.
 
----
-
-## 5. Data Retention & Soft Delete Strategy
+## Data Retention & Soft Delete Strategy
 
 - Rely on OpenAI `deleted_at` / `archived_at` to mark inactive rows.
-- Never hard-delete; if API omits a row without a deleted timestamp, flag in `openai_admin_sync_runs` (future work).
+- Never hard-delete; if the API omits a row without a deleted timestamp, flag in `openai_admin_sync_runs` (future work).
 - Purge policies follow organization data retention rules (documented separately in `integrations.md`).
 
----
-
-## 6. Security & Privacy Considerations
+## Security & Privacy Considerations
 
 - Service account keys store only redacted token; full key handed off to encryption helper during creation flow and discarded after ingest.
 - Add logging guard to ensure `redacted_value` is masked before writing to structured logs.
 - Limit direct querying via RBAC: DB role used by analytics UI gets read-only view without key tables (expose via `openai_admin_readonly` view if needed).
 
----
-
-## 7. Open Questions for Reviewers
+## Open Questions for Reviewers
 
 1. Should `openai_projects` include billing currency/plan fields? (Fixture omits but API doc mentions optional billing info.)
 2. Do we require historical snapshots (SCD Type 2) for project membership, or are current-state rows sufficient?
-3. Confirm retention policy for certificate events – is 90-day rolling window acceptable?
+3. Confirm retention policy for certificate events – is a 90-day rolling window acceptable?
 4. Do we need composite keys for `openai_admin_cursors` keyed by organization + endpoint when multi-org support lands?
 
----
-
-## 8. Approvals & Next Steps
+## Approvals & Next Steps
 
 - Share this document with Data (Alice) and Infra (Jamal) for async comments.
