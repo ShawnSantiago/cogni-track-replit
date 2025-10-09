@@ -3,19 +3,10 @@
 import React from 'react';
 
 import { cn } from '@/lib/utils';
-
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
 
 interface UsageSummaryProps {
-  events: UsageEvent[];
+  events: UsageEventWithMetadata[];
 }
 
 export default function UsageSummary({ events }: UsageSummaryProps) {
@@ -23,8 +14,13 @@ export default function UsageSummary({ events }: UsageSummaryProps) {
   const totalTokensIn = events.reduce((sum, event) => sum + (event.tokensIn || 0), 0);
   const totalTokensOut = events.reduce((sum, event) => sum + (event.tokensOut || 0), 0);
   const totalCost = events.reduce((sum, event) => sum + parseFloat(event.costEstimate || '0'), 0);
+  const totalCachedInputTokens = events.reduce((sum, event) => sum + (event.inputCachedTokens || 0), 0);
 
   const uniqueModels = Array.from(new Set(events.map(event => event.model)));
+  const uniqueProjects = Array.from(new Set(events.map(event => event.projectId).filter((value): value is string => Boolean(value))));
+  const uniqueApiKeys = Array.from(new Set(events.map(event => event.openaiApiKeyId).filter((value): value is string => Boolean(value))));
+  const uniqueServiceTiers = Array.from(new Set(events.map(event => event.serviceTier).filter((value): value is string => Boolean(value))));
+  const windowedEventCount = events.filter(event => event.windowStart !== null).length;
 
   const providerStats = events.reduce((acc, event) => {
     if (!acc[event.provider]) {
@@ -63,7 +59,17 @@ export default function UsageSummary({ events }: UsageSummaryProps) {
     {
       label: 'Total cost',
       value: `$${totalCost.toFixed(4)}`,
-      accent: 'text-foreground'
+      accent: 'text-primary'
+    },
+    {
+      label: 'Cached input tokens',
+      value: formatNumber(totalCachedInputTokens),
+      accent: 'text-primary'
+    },
+    {
+      label: 'Windowed events',
+      value: `${windowedEventCount.toLocaleString()} of ${totalEvents.toLocaleString()}`,
+      accent: 'text-primary'
     }
   ];
 
@@ -102,11 +108,64 @@ export default function UsageSummary({ events }: UsageSummaryProps) {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
+      </div>
+    </div>
+  )}
 
-      {uniqueModels.length > 0 && (
+  {uniqueProjects.length > 0 && (
+    <div className="mt-8 space-y-3">
+      <h3 className="text-lg font-medium text-foreground">Projects tracked</h3>
+      <div className="flex flex-wrap gap-2">
+        {uniqueProjects.map(projectId => (
+          <span
+            key={projectId}
+            className="inline-flex items-center rounded-full border border-border bg-muted/40 px-3 py-1 text-sm text-muted-foreground"
+          >
+            {projectId}
+          </span>
+        ))}
+      </div>
+    </div>
+  )}
+
+  {uniqueApiKeys.length > 0 && (
+    <div className="mt-8 space-y-3">
+      <h3 className="text-lg font-medium text-foreground">API keys</h3>
+      <div className="flex flex-wrap gap-2">
+        {uniqueApiKeys.slice(0, 8).map(apiKeyId => (
+          <span
+            key={apiKeyId}
+            className="inline-flex items-center rounded-full border border-border bg-muted/20 px-3 py-1 text-sm text-muted-foreground"
+          >
+            {apiKeyId}
+          </span>
+        ))}
+        {uniqueApiKeys.length > 8 && (
+          <span className="inline-flex items-center rounded-full border border-dashed border-border px-3 py-1 text-sm text-muted-foreground">
+            +{uniqueApiKeys.length - 8} more
+          </span>
+        )}
+      </div>
+    </div>
+  )}
+
+  {uniqueServiceTiers.length > 0 && (
+    <div className="mt-8 space-y-3">
+      <h3 className="text-lg font-medium text-foreground">Service tiers</h3>
+      <div className="flex flex-wrap gap-2">
+        {uniqueServiceTiers.map(serviceTier => (
+          <span
+            key={serviceTier}
+            className="inline-flex items-center rounded-full border border-border bg-muted/30 px-3 py-1 text-sm text-muted-foreground"
+          >
+            {serviceTier}
+          </span>
+        ))}
+      </div>
+    </div>
+  )}
+
+  {uniqueModels.length > 0 && (
         <div className="mt-8 space-y-3">
           <h3 className="text-lg font-medium text-foreground">Models used</h3>
           <div className="flex flex-wrap gap-2">
@@ -123,7 +182,12 @@ export default function UsageSummary({ events }: UsageSummaryProps) {
       )}
 
       {totalEvents === 0 && (
-        <div className="mt-8 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="mt-8 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center text-sm text-muted-foreground"
+        >
           No usage data matches the current filters.
         </div>
       )}

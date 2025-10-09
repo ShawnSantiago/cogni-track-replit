@@ -57,27 +57,44 @@ export async function GET(request: NextRequest) {
     const { getDb } = await import('../../../lib/database');
     const { usageEvents, providerKeys } = await import('../../../db/schema');
     const { eq, desc } = await import('drizzle-orm');
+    const {
+      BASE_USAGE_EVENT_SELECTION,
+      METADATA_USAGE_EVENT_SELECTION,
+      isMissingColumnError,
+      mapDbRowToUsageEvent,
+    } = await import('../../../lib/usage-event-helpers');
 
     // Fetch usage events for the user
     const db = getDb();
-    const events = await db
-      .select({
-        id: usageEvents.id,
-        model: usageEvents.model,
-        tokensIn: usageEvents.tokensIn,
-        tokensOut: usageEvents.tokensOut,
-        costEstimate: usageEvents.costEstimate,
-        timestamp: usageEvents.timestamp,
-        provider: providerKeys.provider,
-      })
-      .from(usageEvents)
-      .innerJoin(providerKeys, eq(usageEvents.keyId, providerKeys.id))
-      .where(eq(providerKeys.userId, userId))
-      .orderBy(desc(usageEvents.timestamp))
-      .limit(limit)
-      .offset(offset);
+    const buildSelection = (includeMetadata: boolean) =>
+      includeMetadata
+        ? { ...BASE_USAGE_EVENT_SELECTION, ...METADATA_USAGE_EVENT_SELECTION }
+        : { ...BASE_USAGE_EVENT_SELECTION };
 
-    return NextResponse.json({ events });
+    const fetchEvents = (includeMetadata: boolean) =>
+      db
+        .select(buildSelection(includeMetadata))
+        .from(usageEvents)
+        .innerJoin(providerKeys, eq(usageEvents.keyId, providerKeys.id))
+        .where(eq(providerKeys.userId, userId))
+        .orderBy(desc(usageEvents.timestamp))
+        .limit(limit)
+        .offset(offset);
+
+    try {
+      const events = await fetchEvents(true);
+      const serializedEvents = (events as any[]).map(mapDbRowToUsageEvent);
+      return NextResponse.json({ events: serializedEvents });
+    } catch (queryError) {
+      if (isMissingColumnError(queryError)) {
+        console.warn('[api/usage] metadata columns missing – falling back to legacy selection');
+        const legacyEvents = await fetchEvents(false);
+        const serializedEvents = (legacyEvents as any[]).map(mapDbRowToUsageEvent);
+        return NextResponse.json({ events: serializedEvents });
+      }
+
+      throw queryError;
+    }
   } catch (error) {
     console.error('Error fetching usage events:', error);
     return NextResponse.json({ 

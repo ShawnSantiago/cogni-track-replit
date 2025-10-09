@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, serial, integer, decimal, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, serial, integer, decimal, jsonb, uniqueIndex, boolean } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // Users table to store Clerk user IDs
 export const users = pgTable("users", {
@@ -30,8 +31,44 @@ export const usageEvents = pgTable("usage_events", {
   tokensOut: integer("tokens_out").default(0),
   costEstimate: decimal("cost_estimate", { precision: 10, scale: 6 }).default("0"),
   timestamp: timestamp("timestamp").notNull(),
+  windowStart: timestamp("window_start"),
+  windowEnd: timestamp("window_end"),
+  projectId: text("project_id"),
+  openaiUserId: text("openai_user_id"),
+  openaiApiKeyId: text("openai_api_key_id"),
+  serviceTier: text("service_tier"),
+  batch: boolean("batch"),
+  numModelRequests: integer("num_model_requests"),
+  inputCachedTokens: integer("input_cached_tokens"),
+  inputUncachedTokens: integer("input_uncached_tokens"),
+  inputTextTokens: integer("input_text_tokens"),
+  outputTextTokens: integer("output_text_tokens"),
+  inputCachedTextTokens: integer("input_cached_text_tokens"),
+  inputAudioTokens: integer("input_audio_tokens"),
+  inputCachedAudioTokens: integer("input_cached_audio_tokens"),
+  outputAudioTokens: integer("output_audio_tokens"),
+  inputImageTokens: integer("input_image_tokens"),
+  inputCachedImageTokens: integer("input_cached_image_tokens"),
+  outputImageTokens: integer("output_image_tokens"),
 }, (usageEvents) => ({
-  usageAdminBucketIdx: uniqueIndex("usage_admin_bucket_idx").on(usageEvents.timestamp, usageEvents.model, usageEvents.keyId),
+  // NOTE: The column order (keyId, model, windowStart) in this unique index
+  // matches the query pattern in the fetcher for optimal performance.
+  // If you change the index column order or the query pattern, review for performance impact.
+  // NOTE: Column order mirrors the lookup order in fetchAndStoreUsageForUser (keyId → model → windowStart → windowEnd)
+  // so modifications should evaluate query performance and dedupe semantics together.
+  usageAdminBucketIdx: uniqueIndex("usage_admin_bucket_idx")
+    .on(
+      usageEvents.keyId,
+      usageEvents.model,
+      usageEvents.windowStart,
+      usageEvents.windowEnd,
+      sql`COALESCE(${usageEvents.projectId}, '')`,
+      sql`COALESCE(${usageEvents.openaiApiKeyId}, '')`,
+      sql`COALESCE(${usageEvents.openaiUserId}, '')`,
+      sql`COALESCE(${usageEvents.serviceTier}, '')`,
+      sql`COALESCE(${usageEvents.batch}, false)`
+    )
+    .where(sql`window_start IS NOT NULL`),
 }));
 
 export const openaiProjects = pgTable("openai_projects", {

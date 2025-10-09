@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2025-10-07T23:05:00Z",
+  "description": "Synthetic dataset validating manual dedupe fallback instrumentation counters.",
+  "telemetry": {
+    "processedUsers": 1,
+    "processedKeys": 1,
+    "simulatedKeys": 0,
+    "failedKeys": 0,
+    "storedEvents": 4,
+    "updatedEvents": 1,
+    "windowsProcessed": 2,
+    "constraintInserts": 2,
+    "constraintUpdates": 0,
+    "manualFallbackInserts": 1,
+    "manualFallbackUpdates": 2,
+    "manualFallbackWindows": 1,
+    "manualFallbackKeys": 1,
+    "issuesByCode": {
+      "PRICING_FALLBACK": 1
+    }
+  },
+  "persistenceSamples": [
+    {
+      "userId": "synthetic-user",
+      "keyId": 4242,
+      "windowStart": "2025-09-15T00:00:00Z",
+      "windowEnd": "2025-09-16T00:00:00Z",
+      "persistence": {
+        "constraint": {
+          "inserted": 2,
+          "updated": 0
+        },
+        "manualFallback": {
+          "inserted": 1,
+          "updated": 2
+        }
+      },
+      "manualFallbackWindows": 1,
+      "notes": "Manual fallback simulates missing usage_admin_bucket_idx metadata for one bucket while other buckets continue via constraint upsert."
+    }
+  ]
+}

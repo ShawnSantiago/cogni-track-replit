@@ -104,6 +104,11 @@ type UsageEvent = {
   tokensOut: number;
   costEstimate: number;
   source: string;
+  projectId: string | null;
+  openaiApiKeyId: string | null;
+  openaiUserId: string | null;
+  serviceTier: string | null;
+  batch: boolean | null;
 };
 
 type DedupedUsageEvent = {
@@ -113,6 +118,11 @@ type DedupedUsageEvent = {
   tokensOut: number;
   costEstimate: number;
   sources: string[];
+  projectId: string | null;
+  openaiApiKeyId: string | null;
+  openaiUserId: string | null;
+  serviceTier: string | null;
+  batch: boolean | null;
 };
 
 type UsageSummary = {
@@ -211,12 +221,60 @@ function extractModel(item: AdminLineItem): string {
   return 'unknown';
 }
 
+function asString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function extractAdminMetadata(item: AdminLineItem): {
+  projectId: string | null;
+  openaiApiKeyId: string | null;
+  openaiUserId: string | null;
+  serviceTier: string | null;
+  batch: boolean | null;
+} {
+  const metadata = (item.metadata ?? {}) as Record<string, unknown>;
+  const read = (field: string): unknown => (item as any)?.[field] ?? metadata[field];
+
+  const projectId = asString(read('project_id'));
+  const apiKeyId = asString(read('api_key_id')) ?? asString(read('service_account_key_id'));
+  const userId = asString(read('user_id'));
+  const serviceTier = asString(read('service_tier'));
+  const batch = asBoolean(read('batch'));
+
+  return {
+    projectId,
+    openaiApiKeyId: apiKeyId,
+    openaiUserId: userId,
+    serviceTier,
+    batch,
+  };
+}
+
+function readStringMetadata(result: unknown, field: string): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const direct = (result as Record<string, unknown>)[field];
+  const directValue = asString(direct);
+  if (directValue) return directValue;
+  const metadata = (result as Record<string, unknown>).metadata;
+  if (metadata && typeof metadata === 'object') {
+    return asString((metadata as Record<string, unknown>)[field]);
+  }
+  return null;
+}
+
 function normalizeAdminLineItems(items: AdminLineItem[] | undefined, timestampIso: string, source: string): UsageEvent[] {
   if (!items?.length) return [];
   return items.map((item) => {
     const tokensIn = safeNumber(item.input_tokens ?? item.prompt_tokens ?? item.usage?.prompt_tokens);
     const tokensOut = safeNumber(item.output_tokens ?? item.completion_tokens ?? item.usage?.completion_tokens);
     const cost = safeNumber(item.cost ?? item.amount ?? item.usage?.total_cost);
+    const { projectId, openaiApiKeyId, openaiUserId, serviceTier, batch } = extractAdminMetadata(item);
     return {
       bucketTimestamp: timestampIso,
       model: extractModel(item),
@@ -224,14 +282,32 @@ function normalizeAdminLineItems(items: AdminLineItem[] | undefined, timestampIs
       tokensOut,
       costEstimate: Number(cost.toFixed(6)),
       source,
+      projectId,
+      openaiApiKeyId,
+      openaiUserId,
+      serviceTier,
+      batch,
     };
   });
+}
+
+function buildUsageDedupKey(event: Pick<UsageEvent, 'bucketTimestamp' | 'model' | 'projectId' | 'openaiApiKeyId' | 'openaiUserId' | 'serviceTier' | 'batch'>): string {
+  const batchKey = event.batch === null ? 'null' : event.batch ? 'true' : 'false';
+  return [
+    event.bucketTimestamp,
+    event.model,
+    event.projectId ?? '',
+    event.openaiApiKeyId ?? '',
+    event.openaiUserId ?? '',
+    event.serviceTier ?? '',
+    batchKey,
+  ].join('|');
 }
 
 function dedupeUsageEvents(events: UsageEvent[]): DedupedUsageEvent[] {
   const map = new Map<string, DedupedUsageEvent>();
   for (const event of events) {
-    const key = `${event.bucketTimestamp}|${event.model}`;
+    const key = buildUsageDedupKey(event);
     if (!map.has(key)) {
       map.set(key, {
         bucketTimestamp: event.bucketTimestamp,
@@ -240,6 +316,11 @@ function dedupeUsageEvents(events: UsageEvent[]): DedupedUsageEvent[] {
         tokensOut: event.tokensOut,
         costEstimate: event.costEstimate,
         sources: [event.source],
+        projectId: event.projectId,
+        openaiApiKeyId: event.openaiApiKeyId,
+        openaiUserId: event.openaiUserId,
+        serviceTier: event.serviceTier,
+        batch: event.batch,
       });
       continue;
     }
@@ -247,14 +328,19 @@ function dedupeUsageEvents(events: UsageEvent[]): DedupedUsageEvent[] {
     const sources = existing.sources.includes(event.source)
       ? existing.sources
       : [...existing.sources, event.source];
-    map.set(key, {
-      bucketTimestamp: existing.bucketTimestamp,
-      model: existing.model,
-      tokensIn: Math.max(existing.tokensIn, event.tokensIn),
-      tokensOut: Math.max(existing.tokensOut, event.tokensOut),
-      costEstimate: Math.max(existing.costEstimate, event.costEstimate),
-      sources,
-    });
+      map.set(key, {
+        bucketTimestamp: existing.bucketTimestamp,
+        model: existing.model,
+        tokensIn: Math.max(existing.tokensIn, event.tokensIn),
+        tokensOut: Math.max(existing.tokensOut, event.tokensOut),
+        costEstimate: Math.max(existing.costEstimate, event.costEstimate),
+        sources,
+        projectId: existing.projectId,
+        openaiApiKeyId: existing.openaiApiKeyId,
+        openaiUserId: existing.openaiUserId,
+        serviceTier: existing.serviceTier,
+        batch: existing.batch,
+      });
   }
   return Array.from(map.values());
 }
@@ -369,7 +455,16 @@ function inspectRelationships(input: {
 }
 
 async function runSpike() {
-  const usage = await loadJson<AdminUsageResponse>('usage_completions_fixture.json');
+  const completionFixtures = [
+    { name: 'usage_completions_fixture.json', label: 'primary' },
+    { name: 'usage_completions_fixture_dual.json', label: 'dual' },
+  ] as const;
+
+  const completionResponses = await Promise.all(
+    completionFixtures.map(({ name }) => loadJson<AdminUsageResponse>(name))
+  );
+
+  const usage = completionResponses[0];
   const usageEvents: UsageEvent[] = [];
   const pendingCompletionProjects: string[] = [];
   const pendingCompletionServiceAccounts: string[] = [];
@@ -380,40 +475,85 @@ async function runSpike() {
   const unknownServiceAccountKeys = new Set<string>();
   const unknownCertificates = new Set<string>();
 
-  for (const bucket of usage.data ?? []) {
-    const timestamp = resolveTimestamp(bucket);
-    for (const result of bucket.results ?? []) {
-      const projectId = (result as any)?.metadata?.project_id;
-      if (projectId) {
-        pendingCompletionProjects.push(projectId);
+  completionResponses.forEach((response, index) => {
+    const label = completionFixtures[index].label;
+    for (const bucket of response.data ?? []) {
+      const timestamp = resolveTimestamp(bucket);
+      for (const result of bucket.results ?? []) {
+        const projectId = readStringMetadata(result, 'project_id');
+        if (projectId) {
+          pendingCompletionProjects.push(projectId);
+        }
+        const serviceAccountId = readStringMetadata(result, 'service_account_id');
+        if (serviceAccountId) {
+          pendingCompletionServiceAccounts.push(serviceAccountId);
+        }
+        const serviceAccountKeyId = readStringMetadata(result, 'service_account_key_id');
+        if (serviceAccountKeyId) {
+          pendingCompletionKeys.push(serviceAccountKeyId);
+        }
+        const certificateId = readStringMetadata(result, 'certificate_id');
+        if (certificateId) {
+          pendingCompletionCertificates.push(certificateId);
+        }
       }
-      const serviceAccountId = (result as any)?.metadata?.service_account_id;
-      if (serviceAccountId) {
-        pendingCompletionServiceAccounts.push(serviceAccountId);
-      }
-      const keyId = (result as any)?.metadata?.service_account_key_id;
-      if (keyId) {
-        pendingCompletionKeys.push(keyId);
-      }
-      const certificateId = (result as any)?.metadata?.certificate_id;
-      if (certificateId) {
-        pendingCompletionCertificates.push(certificateId);
-      }
+      usageEvents.push(
+        ...normalizeAdminLineItems(bucket.results, timestamp, `bucket:data:${label}`)
+      );
     }
-    usageEvents.push(
-      ...normalizeAdminLineItems(bucket.results, timestamp, 'bucket:data')
-    );
-  }
 
-  for (const daily of usage.daily_costs ?? []) {
-    const timestamp = resolveTimestamp({ timestamp: daily.timestamp }, '1970-01-01T00:00:00.000Z');
-    usageEvents.push(
-      ...normalizeAdminLineItems(daily.line_items, timestamp, 'daily_costs')
-    );
-  }
+    for (const daily of response.daily_costs ?? []) {
+      const timestamp = resolveTimestamp({ timestamp: daily.timestamp }, '1970-01-01T00:00:00.000Z');
+      usageEvents.push(
+        ...normalizeAdminLineItems(daily.line_items, timestamp, `daily_costs:${label}`)
+      );
+    }
+  });
 
   const dedupedUsage = dedupeUsageEvents(usageEvents);
   const usageSummary = summarizeUsage(usage, dedupedUsage, usageEvents.length);
+
+  const expectedBuckets = [
+    {
+      projectId: 'proj_alpha',
+      openaiApiKeyId: 'key_alpha',
+      openaiUserId: 'user_alpha',
+      serviceTier: 'standard',
+      batch: false,
+      tokensIn: 2048,
+      tokensOut: 512,
+    },
+    {
+      projectId: 'proj_beta',
+      openaiApiKeyId: 'key_beta',
+      openaiUserId: 'user_beta',
+      serviceTier: 'scale',
+      batch: true,
+      tokensIn: 1024,
+      tokensOut: 256,
+    },
+  ] as const;
+
+  for (const expected of expectedBuckets) {
+    const match = dedupedUsage.find(
+      (event) =>
+        event.projectId === expected.projectId &&
+        event.openaiApiKeyId === expected.openaiApiKeyId &&
+        event.openaiUserId === expected.openaiUserId &&
+        event.serviceTier === expected.serviceTier &&
+        event.batch === expected.batch
+    );
+    if (!match) {
+      throw new Error(
+        `Missing expected admin usage bucket for project ${expected.projectId} (${expected.serviceTier}/${expected.openaiApiKeyId})`
+      );
+    }
+    if (match.tokensIn !== expected.tokensIn || match.tokensOut !== expected.tokensOut) {
+      throw new Error(
+        `Unexpected token totals for project ${expected.projectId}: expected in=${expected.tokensIn}, out=${expected.tokensOut}, got in=${match.tokensIn}, out=${match.tokensOut}`
+      );
+    }
+  }
 
   const [projects, members, serviceAccounts, keys, certificates, certificateEvents] = await Promise.all([
     loadJson<{ data: Project[] }>('projects_list_fixture.json').then((resp) => resp.data ?? []),
@@ -540,21 +680,19 @@ async function runSpike() {
       for (const page of pages) {
         for (const bucket of page.data ?? []) {
           for (const result of bucket.results ?? []) {
-            const candidate = (field: string) =>
-              (result as any)?.[field] ?? (result as any)?.metadata?.[field] ?? null;
-            const projectId = candidate('project_id');
+            const projectId = readStringMetadata(result, 'project_id');
             if (projectId && !knownProjectIds.has(projectId)) {
               unknownProjects.add(`${endpoint}:${projectId}`);
             }
-            const serviceAccountId = candidate('service_account_id');
+            const serviceAccountId = readStringMetadata(result, 'service_account_id');
             if (serviceAccountId && !knownServiceAccountIds.has(serviceAccountId)) {
               unknownServiceAccounts.add(`${endpoint}:${serviceAccountId}`);
             }
-            const keyId = candidate('service_account_key_id');
+            const keyId = readStringMetadata(result, 'service_account_key_id');
             if (keyId && !knownServiceAccountKeyIds.has(keyId)) {
               unknownServiceAccountKeys.add(`${endpoint}:${keyId}`);
             }
-            const certificateId = candidate('certificate_id');
+            const certificateId = readStringMetadata(result, 'certificate_id');
             if (certificateId && !knownCertificateIds.has(certificateId)) {
               unknownCertificates.add(`${endpoint}:${certificateId}`);
             }
@@ -581,7 +719,7 @@ async function runSpike() {
     metadata: {
       generatedAt: new Date().toISOString(),
       fixtures: {
-        usage: 'usage_completions_fixture.json',
+        usage: completionFixtures.map((fixture) => fixture.name),
         usageVariants: {
           embeddings: 'usage_embeddings_fixture.json',
           moderations: 'usage_moderations_fixture.json',
@@ -602,6 +740,19 @@ async function runSpike() {
     },
     usageSummary,
     dedupedUsage,
+    metadataBuckets: dedupedUsage.map((bucket) => ({
+      bucketTimestamp: bucket.bucketTimestamp,
+      model: bucket.model,
+      projectId: bucket.projectId,
+      openaiApiKeyId: bucket.openaiApiKeyId,
+      openaiUserId: bucket.openaiUserId,
+      serviceTier: bucket.serviceTier,
+      batch: bucket.batch,
+      tokensIn: bucket.tokensIn,
+      tokensOut: bucket.tokensOut,
+      costEstimate: bucket.costEstimate,
+      sources: bucket.sources,
+    })),
     additionalSummaries,
     relationships,
     foreignKeyIssues: {

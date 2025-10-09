@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/toaster";
 import { NavMenu } from "@/components/ui/NavMenu";
 import { SafeClerkProvider } from "@/lib/safe-clerk";
+import { SkipLink } from "@/components/ui/SkipLink";
 
 export const metadata: Metadata = {
   title: "LLM Usage Tracker",
@@ -37,12 +38,15 @@ export default function RootLayout({
           "min-h-screen bg-background font-sans antialiased",
         )}
       >
+        <SkipLink />
         <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="container flex h-14 items-center">
             <NavMenu />
           </div>
         </header>
-        {children}
+        <main id="main-content" tabIndex={-1}>
+          {children}
+        </main>
         <Toaster />
       </body>
     </html>

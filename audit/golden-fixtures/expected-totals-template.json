@@ -1,0 +1,16 @@
+{
+  "fixture": "audit/golden-fixtures/daily-usage/<tenant>-<date>.json",
+  "expected": {
+    "eventCount": 0,
+    "windowCount": 0,
+    "totalTokensIn": 0,
+    "totalTokensOut": 0,
+    "distinctProjects": 0,
+    "distinctKeys": 0,
+    "distinctUsers": 0,
+    "models": [
+      "model-name"
+    ]
+  },
+  "notes": "Use with summarize-daily-usage-fixture.ts --expected <file> [--tolerance <value>] to guard against regressions."
+}

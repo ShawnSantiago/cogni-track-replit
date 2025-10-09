@@ -58,7 +58,6 @@ coverage/
 .replit
 .clinerules
 replit.*
-AGENTS.md
 CLAUDE.md
 
 .env.*
@@ -66,6 +65,7 @@ pnpm-lock.yaml
 
 openAI-data/
 screenshots/
+.envrc
 # Docusaurus
 docs-site/build/
 docs-site/.docusaurus/

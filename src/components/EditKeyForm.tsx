@@ -13,8 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-type UsageMode = 'standard' | 'admin';
+import type { UsageMode } from '@/types/provider-keys';
 
 interface UpdateKeyPayload {
   apiKey?: string;

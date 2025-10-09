@@ -4,19 +4,10 @@ import React from 'react';
 
 import { cn } from '@/lib/utils';
 import { calculateUsageGrowth } from '../lib/csv-export';
-
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
 
 interface GrowthAnalysisProps {
-  events: UsageEvent[];
+  events: UsageEventWithMetadata[];
   className?: string;
 }
 

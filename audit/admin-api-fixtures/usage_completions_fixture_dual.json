@@ -1,0 +1,43 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "usage_bucket",
+      "start_time": 1727049600,
+      "start_time_iso": "2024-09-23T00:00:00Z",
+      "end_time": 1727136000,
+      "window": "day",
+      "results": [
+        {
+          "object": "usage_line_item",
+          "operation": "responses.create",
+          "model": "gpt-4o",
+          "input_tokens": 2048,
+          "output_tokens": 512,
+          "service_tier": "standard",
+          "batch": false,
+          "project_id": "proj_alpha",
+          "api_key_id": "key_alpha",
+          "user_id": "user_alpha",
+          "num_model_requests": 24
+        },
+        {
+          "object": "usage_line_item",
+          "operation": "responses.create",
+          "model": "gpt-4o",
+          "input_tokens": 1024,
+          "output_tokens": 256,
+          "service_tier": "scale",
+          "batch": true,
+          "project_id": "proj_beta",
+          "api_key_id": "key_beta",
+          "user_id": "user_beta",
+          "num_model_requests": 12
+        }
+      ]
+    }
+  ],
+  "daily_costs": [],
+  "has_more": false,
+  "next_page": null
+}

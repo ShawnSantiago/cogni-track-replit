@@ -3,47 +3,52 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { getDb } from '../../lib/database';
 import { usageEvents, providerKeys } from '../../db/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import RefreshButton from '../../components/RefreshButton';
 import FilterableAnalyticsDashboard from '../../components/FilterableAnalyticsDashboard';
 import { refreshUsageData } from './actions';
-
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
+import {
+  BASE_USAGE_EVENT_SELECTION,
+  METADATA_USAGE_EVENT_SELECTION,
+  isMissingColumnError,
+  mapDbRowToUsageEvent,
+} from '@/lib/usage-event-helpers';
 
 // Removed UsageDataPoint interface - now handled in FilterableAnalyticsDashboard
 
-async function getUsageData(userId: string): Promise<UsageEvent[]> {
-  try {
-    const db = getDb();
-    const events = await db
-      .select({
-        id: usageEvents.id,
-        model: usageEvents.model,
-        tokensIn: usageEvents.tokensIn,
-        tokensOut: usageEvents.tokensOut,
-        costEstimate: usageEvents.costEstimate,
-        timestamp: usageEvents.timestamp,
-        provider: providerKeys.provider,
-      })
+const buildSelection = (includeMetadata: boolean) =>
+  includeMetadata
+    ? { ...BASE_USAGE_EVENT_SELECTION, ...METADATA_USAGE_EVENT_SELECTION }
+    : { ...BASE_USAGE_EVENT_SELECTION };
+
+async function getUsageData(userId: string): Promise<UsageEventWithMetadata[]> {
+  const db = getDb();
+
+  const loadEvents = (includeMetadata: boolean) =>
+    db
+      .select(buildSelection(includeMetadata))
       .from(usageEvents)
       .innerJoin(providerKeys, eq(usageEvents.keyId, providerKeys.id))
       .where(eq(providerKeys.userId, userId))
       .orderBy(desc(usageEvents.timestamp))
       .limit(1000);
 
-    return events.map(event => ({
-      ...event,
-      timestamp: event.timestamp.toISOString(),
-    }));
+  try {
+    const events = await loadEvents(true);
+    return (events as any[]).map(mapDbRowToUsageEvent);
   } catch (error) {
+    if (isMissingColumnError(error)) {
+      console.warn('[analytics] usage metadata columns missing – falling back to legacy selection');
+      try {
+        const legacyEvents = await loadEvents(false);
+        return (legacyEvents as any[]).map(mapDbRowToUsageEvent);
+      } catch (fallbackError) {
+        console.error('Fallback usage query failed:', fallbackError);
+        return [];
+      }
+    }
+
     console.error('Error fetching usage data:', error);
     return [];
   }
@@ -63,8 +68,11 @@ export default async function AnalyticsPage() {
   const events = await getUsageData(userId);
   
   // Extract unique providers and models for filtering
-  const availableProviders = [...new Set(events.map(e => e.provider))];
-  const availableModels = [...new Set(events.map(e => e.model))];
+  const availableProviders = Array.from(new Set(events.map(e => e.provider))).sort();
+  const availableModels = Array.from(new Set(events.map(e => e.model))).sort();
+  const availableProjects = Array.from(new Set(events.map(e => e.projectId).filter((value): value is string => Boolean(value)))).sort();
+  const availableApiKeys = Array.from(new Set(events.map(e => e.openaiApiKeyId).filter((value): value is string => Boolean(value)))).sort();
+  const availableServiceTiers = Array.from(new Set(events.map(e => e.serviceTier).filter((value): value is string => Boolean(value)))).sort();
   
   // Bind server action with specific parameters
   const refresh7Days = refreshUsageData.bind(null, 7);
@@ -72,10 +80,10 @@ export default async function AnalyticsPage() {
   const hasEvents = events.length > 0;
 
   return (
-    <main className="container space-y-10 py-10 lg:py-12">
+    <div className="container space-y-10 py-10 lg:py-12" role="region" aria-labelledby="analytics-page-title">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Usage analytics</h1>
+          <h1 id="analytics-page-title" className="text-3xl font-semibold tracking-tight">Usage analytics</h1>
           <p className="max-w-2xl text-muted-foreground">
             Monitor spend anomalies, track token trends, and export usage snapshots without leaving your workspace.
           </p>
@@ -101,11 +109,17 @@ export default async function AnalyticsPage() {
           events={events}
           availableProviders={availableProviders}
           availableModels={availableModels}
+          availableProjects={availableProjects}
+          availableApiKeys={availableApiKeys}
+          availableServiceTiers={availableServiceTiers}
         />
       ) : (
         <section
           aria-labelledby="analytics-empty-state-heading"
-          className="rounded-lg border border-dashed border-muted-foreground/30 bg-card p-10 text-center shadow-sm"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="rounded-lg border border-muted-foreground/30 bg-muted/20 p-10 text-center shadow-sm"
         >
           <div className="space-y-4">
             <div className="space-y-2">
@@ -133,6 +147,6 @@ export default async function AnalyticsPage() {
           </div>
         </section>
       )}
-    </main>
+    </div>
   );
 }

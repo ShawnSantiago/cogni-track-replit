@@ -3,16 +3,7 @@
 import React, { useState, useEffect } from 'react';
 
 import { cn } from '@/lib/utils';
-
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
 
 export interface AlertThreshold {
   id: string;
@@ -22,9 +13,11 @@ export interface AlertThreshold {
 }
 
 interface CostAlertsProps {
-  events: UsageEvent[];
+  events: UsageEventWithMetadata[];
   className?: string;
 }
+
+const getEventDate = (event: UsageEventWithMetadata) => new Date(event.windowStart ?? event.timestamp);
 
 const STATUS_STYLES: Record<'safe' | 'warning' | 'danger', { badge: string; border: string; bar: string; text: string }> = {
   safe: {
@@ -118,7 +111,7 @@ export default function CostAlerts({ events, className }: CostAlertsProps) {
     }
 
     return events
-      .filter(event => new Date(event.timestamp) >= startDate)
+      .filter(event => getEventDate(event) >= startDate)
       .reduce((sum, event) => sum + parseFloat(event.costEstimate || '0'), 0);
   };
 

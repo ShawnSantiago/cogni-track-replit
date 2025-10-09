@@ -1,0 +1,40 @@
+                                                Table "public.usage_events"
+          Column           |            Type             | Collation | Nullable |                 Default                  
+---------------------------+-----------------------------+-----------+----------+------------------------------------------
+ id                        | integer                     |           | not null | nextval('usage_events_id_seq'::regclass)
+ key_id                    | integer                     |           | not null | 
+ model                     | text                        |           | not null | 
+ tokens_in                 | integer                     |           |          | 0
+ tokens_out                | integer                     |           |          | 0
+ cost_estimate             | numeric(10,6)               |           |          | '0'::numeric
+ timestamp                 | timestamp without time zone |           | not null | 
+ window_start              | timestamp without time zone |           |          | 
+ window_end                | timestamp without time zone |           |          | 
+ project_id                | text                        |           |          | 
+ openai_user_id            | text                        |           |          | 
+ openai_api_key_id         | text                        |           |          | 
+ service_tier              | text                        |           |          | 
+ batch                     | boolean                     |           |          | 
+ num_model_requests        | integer                     |           |          | 
+ input_cached_tokens       | integer                     |           |          | 
+ input_uncached_tokens     | integer                     |           |          | 
+ input_text_tokens         | integer                     |           |          | 
+ output_text_tokens        | integer                     |           |          | 
+ input_cached_text_tokens  | integer                     |           |          | 
+ input_audio_tokens        | integer                     |           |          | 
+ input_cached_audio_tokens | integer                     |           |          | 
+ output_audio_tokens       | integer                     |           |          | 
+ input_image_tokens        | integer                     |           |          | 
+ input_cached_image_tokens | integer                     |           |          | 
+ output_image_tokens       | integer                     |           |          | 
+Indexes:
+    "usage_events_pkey" PRIMARY KEY, btree (id)
+    "usage_admin_bucket_idx" UNIQUE, btree (key_id, model, window_start, window_end, COALESCE(project_id, ''::text), COALESCE(openai_api_key_id, ''::text), COALESCE(openai_user_id, ''::text), COALESCE(service_tier, ''::text), COALESCE(batch, false)) WHERE window_start IS NOT NULL
+Foreign-key constraints:
+    "usage_events_key_id_provider_keys_id_fk" FOREIGN KEY (key_id) REFERENCES provider_keys(id) ON DELETE CASCADE
+
+       indexname        
+------------------------
+ usage_admin_bucket_idx
+(1 row)
+

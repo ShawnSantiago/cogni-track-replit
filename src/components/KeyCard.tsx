@@ -4,18 +4,10 @@ import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-
-interface ProviderKey {
-  id: number;
-  provider: string;
-  maskedKey?: string;
-  createdAt: string;
-  usageMode?: 'standard' | 'admin';
-  hasOrgConfig?: boolean;
-}
+import type { ProviderKeySummary } from '@/types/provider-keys';
 
 interface KeyCardProps {
-  providerKey: ProviderKey;
+  providerKey: ProviderKeySummary;
   onEdit: (id: number) => void;
   onDelete: (id: number) => void;
 }

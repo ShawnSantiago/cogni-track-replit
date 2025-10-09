@@ -4,37 +4,15 @@ import React, { useState, useMemo, useCallback, useRef } from 'react';
 import UsageSummary from './UsageSummary';
 import UsageChart from './UsageChart';
 import ExportControls from './ExportControls';
-import AdvancedFilters from './AdvancedFilters';
+import AdvancedFilters, { UsageFilterOptions } from './AdvancedFilters';
 import GrowthAnalysis from './GrowthAnalysis';
 import CostAlerts from './CostAlerts';
 import DataAggregation from './DataAggregation';
 
 import ClientOnlyTimestamp from './ClientOnlyTimestamp';
+import { UsageEventWithMetadata } from '@/types/usage';
 
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
-
-interface UsageDataPoint {
-  date: string;
-  tokens: number;
-  cost: number;
-}
-
-interface FilterOptions {
-  dateRange: {
-    start: string;
-    end: string;
-  };
-  providers: string[];
-  models: string[];
-}
+type FilterOptions = UsageFilterOptions;
 
 const getDefaultDateRange = () => {
   const end = new Date();
@@ -46,27 +24,44 @@ const getDefaultDateRange = () => {
   };
 };
 
+const getEventDate = (event: UsageEventWithMetadata) => new Date(event.windowStart ?? event.timestamp);
+
+const getEventDateKey = (event: UsageEventWithMetadata) =>
+  (event.windowStart ?? event.timestamp).split('T')[0];
+
 interface FilterableAnalyticsDashboardProps {
-  events: UsageEvent[];
+  events: UsageEventWithMetadata[];
   availableProviders: string[];
   availableModels: string[];
+  availableProjects: string[];
+  availableApiKeys: string[];
+  availableServiceTiers: string[];
 }
 
 export default function FilterableAnalyticsDashboard({
   events,
   availableProviders,
-  availableModels
+  availableModels,
+  availableProjects,
+  availableApiKeys,
+  availableServiceTiers
 }: FilterableAnalyticsDashboardProps) {
   const defaultFiltersRef = useRef<FilterOptions>({
     dateRange: getDefaultDateRange(),
     providers: [],
-    models: []
+    models: [],
+    projects: [],
+    apiKeys: [],
+    serviceTiers: []
   });
 
   const [filters, setFilters] = useState<FilterOptions>(() => ({
     dateRange: { ...defaultFiltersRef.current.dateRange },
     providers: [...defaultFiltersRef.current.providers],
-    models: [...defaultFiltersRef.current.models]
+    models: [...defaultFiltersRef.current.models],
+    projects: [...defaultFiltersRef.current.projects],
+    apiKeys: [...defaultFiltersRef.current.apiKeys],
+    serviceTiers: [...defaultFiltersRef.current.serviceTiers]
   }));
 
   // Apply filters to events
@@ -75,13 +70,13 @@ export default function FilterableAnalyticsDashboard({
 
     if (filters.dateRange.start) {
       const startDate = new Date(filters.dateRange.start);
-      filtered = filtered.filter(event => new Date(event.timestamp) >= startDate);
+      filtered = filtered.filter(event => getEventDate(event) >= startDate);
     }
 
     if (filters.dateRange.end) {
       const endDate = new Date(filters.dateRange.end);
       endDate.setHours(23, 59, 59, 999);
-      filtered = filtered.filter(event => new Date(event.timestamp) <= endDate);
+      filtered = filtered.filter(event => getEventDate(event) <= endDate);
     }
 
     if (filters.providers.length > 0) {
@@ -92,13 +87,25 @@ export default function FilterableAnalyticsDashboard({
       filtered = filtered.filter(event => filters.models.includes(event.model));
     }
 
+    if (filters.projects.length > 0) {
+      filtered = filtered.filter(event => event.projectId && filters.projects.includes(event.projectId));
+    }
+
+    if (filters.apiKeys.length > 0) {
+      filtered = filtered.filter(event => event.openaiApiKeyId && filters.apiKeys.includes(event.openaiApiKeyId));
+    }
+
+    if (filters.serviceTiers.length > 0) {
+      filtered = filtered.filter(event => event.serviceTier && filters.serviceTiers.includes(event.serviceTier));
+    }
+
     return filtered;
   }, [events, filters]);
 
   // Process chart data from filtered events
   const chartData = useMemo(() => {
     const dailyData = filteredEvents.reduce((acc, event) => {
-      const date = new Date(event.timestamp).toISOString().split('T')[0];
+      const date = getEventDateKey(event);
       if (!acc[date]) {
         acc[date] = { tokens: 0, cost: 0 };
       }
@@ -125,7 +132,10 @@ export default function FilterableAnalyticsDashboard({
     setFilters({
       dateRange: { ...newFilters.dateRange },
       providers: [...newFilters.providers],
-      models: [...newFilters.models]
+      models: [...newFilters.models],
+      projects: [...newFilters.projects],
+      apiKeys: [...newFilters.apiKeys],
+      serviceTiers: [...newFilters.serviceTiers]
     });
   }, []);
 
@@ -134,7 +144,10 @@ export default function FilterableAnalyticsDashboard({
     handleFiltersChange({
       dateRange: { ...defaults.dateRange },
       providers: [...defaults.providers],
-      models: [...defaults.models]
+      models: [...defaults.models],
+      projects: [...defaults.projects],
+      apiKeys: [...defaults.apiKeys],
+      serviceTiers: [...defaults.serviceTiers]
     });
   }, [handleFiltersChange]);
 
@@ -152,6 +165,9 @@ export default function FilterableAnalyticsDashboard({
 
     count += filters.providers.length;
     count += filters.models.length;
+    count += filters.projects.length;
+    count += filters.apiKeys.length;
+    count += filters.serviceTiers.length;
 
     return count;
   }, [filters]);
@@ -193,7 +209,7 @@ export default function FilterableAnalyticsDashboard({
             <UsageChart data={chartData.cost} type="cost" />
           </div>
         ) : hasFiltersApplied ? (
-          <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-card p-8 text-center shadow-sm">
+          <div role="status" aria-live="polite" aria-atomic="true" className="rounded-lg border border-primary/40 bg-primary/10 p-8 text-center shadow-sm text-primary">
             <p className="text-sm font-medium text-foreground">No data matches your current filters</p>
             <p className="mt-2 text-sm text-muted-foreground">
               Expand the date range or clear provider/model chips to see usage trends again.
@@ -206,7 +222,7 @@ export default function FilterableAnalyticsDashboard({
             </button>
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-card p-8 text-center shadow-sm">
+          <div role="status" aria-live="polite" aria-atomic="true" className="rounded-lg border border-muted-foreground/30 bg-muted/20 p-8 text-center shadow-sm">
             <p className="text-sm font-medium text-foreground">Usage charts will appear once we have activity</p>
             <p className="mt-2 text-sm text-muted-foreground">
               Refresh usage or add API keys to start collecting trend data.
@@ -246,6 +262,9 @@ export default function FilterableAnalyticsDashboard({
           onFiltersChange={handleFiltersChange}
           availableProviders={availableProviders}
           availableModels={availableModels}
+          availableProjects={availableProjects}
+          availableApiKeys={availableApiKeys}
+          availableServiceTiers={availableServiceTiers}
         />
       </section>
 
@@ -302,13 +321,25 @@ export default function FilterableAnalyticsDashboard({
                 <thead className="bg-muted/40">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Timestamp
+                      Window (UTC)
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Provider
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Project
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      API key
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Service tier
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Model
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Requests
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Tokens in
@@ -325,16 +356,46 @@ export default function FilterableAnalyticsDashboard({
                   {filteredEvents.slice(0, 20).map((event) => (
                     <tr key={event.id} className="transition-colors hover:bg-muted/40">
                       <td className="px-6 py-4 text-sm text-foreground">
-                        <ClientOnlyTimestamp timestamp={event.timestamp} />
+                        {event.windowStart ? (
+                          <div className="space-y-1">
+                            <span className="block">
+                              <ClientOnlyTimestamp timestamp={event.windowStart} />
+                            </span>
+                            {event.windowEnd && (
+                              <span className="block text-xs text-muted-foreground">
+                                → <ClientOnlyTimestamp timestamp={event.windowEnd} />
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <ClientOnlyTimestamp timestamp={event.timestamp} />
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-foreground">
                         <span className="inline-flex items-center rounded-full border border-border px-2 py-1 text-xs font-medium capitalize text-muted-foreground">
                           {event.provider}
                         </span>
                       </td>
+                      <td className="px-6 py-4 text-sm text-foreground">
+                        {event.projectId ?? '—'}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-foreground">
+                        {event.openaiApiKeyId ?? '—'}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-foreground">
+                        {event.serviceTier ?? '—'}
+                      </td>
                       <td className="px-6 py-4 text-sm text-foreground">{event.model}</td>
                       <td className="px-6 py-4 text-sm text-foreground">
+                        {typeof event.numModelRequests === 'number' ? event.numModelRequests.toLocaleString() : '—'}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-foreground">
                         {(event.tokensIn || 0).toLocaleString()}
+                        {typeof event.inputCachedTokens === 'number' && event.inputCachedTokens > 0 && (
+                          <span className="block text-xs text-muted-foreground">
+                            Cached: {event.inputCachedTokens.toLocaleString()}
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-sm text-foreground">
                         {(event.tokensOut || 0).toLocaleString()}

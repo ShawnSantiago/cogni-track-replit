@@ -34,7 +34,14 @@ export default function UsageChart({ data, type }: UsageChartProps) {
     return value.toString();
   };
 
-  const strokeColor = type === 'tokens' ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))';
+  const strokeColor = type === 'tokens' ? 'hsl(var(--primary))' : 'hsl(var(--accent))';
+
+  // Clamp negatives to 0 to avoid misleading visuals for refunds/adjustments
+  const sanitizedData = data.map(d => ({
+    ...d,
+    tokens: Math.max(0, d.tokens),
+    cost: Math.max(0, d.cost),
+  }));
 
   return (
     <div className="h-80 rounded-lg border border-border bg-card p-6 shadow-sm">
@@ -42,7 +49,7 @@ export default function UsageChart({ data, type }: UsageChartProps) {
         {type === 'tokens' ? 'Token usage over time' : 'Cost trends over time'}
       </h3>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 24, right: 16, left: 8, bottom: 8 }}>
+        <LineChart data={sanitizedData} margin={{ top: 24, right: 16, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="4 4" stroke="hsl(var(--border))" />
           <XAxis
             dataKey="date"

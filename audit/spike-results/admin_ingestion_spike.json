@@ -1,8 +1,11 @@
 {
   "metadata": {
-    "generatedAt": "2025-10-01T02:11:12.965Z",
+    "generatedAt": "2025-10-01T19:24:45.548Z",
     "fixtures": {
-      "usage": "usage_completions_fixture.json",
+      "usage": [
+        "usage_completions_fixture.json",
+        "usage_completions_fixture_dual.json"
+      ],
       "usageVariants": {
         "embeddings": "usage_embeddings_fixture.json",
         "moderations": "usage_moderations_fixture.json",
@@ -23,15 +26,15 @@
   },
   "usageSummary": {
     "totalBuckets": 1,
-    "totalRawEvents": 2,
-    "totalDedupedEvents": 1,
-    "tokensIn": 2849,
-    "tokensOut": 912,
-    "costEstimate": 0.003918,
+    "totalRawEvents": 4,
+    "totalDedupedEvents": 4,
+    "tokensIn": 8770,
+    "tokensOut": 2592,
+    "costEstimate": 0.007836,
     "cursor": {
       "endpoint": "usage/completions",
       "nextPage": null,
-      "lastSyncedAt": "2025-10-01T02:11:12.960Z",
+      "lastSyncedAt": "2025-10-01T19:24:45.543Z",
       "hasMore": false
     }
   },
@@ -43,8 +46,119 @@
       "tokensOut": 912,
       "costEstimate": 0.003918,
       "sources": [
-        "bucket:data",
-        "daily_costs"
+        "bucket:data:primary"
+      ],
+      "projectId": "proj_abc123",
+      "openaiApiKeyId": null,
+      "openaiUserId": null,
+      "serviceTier": null,
+      "batch": null
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o-mini",
+      "tokensIn": 2849,
+      "tokensOut": 912,
+      "costEstimate": 0.003918,
+      "sources": [
+        "daily_costs:primary"
+      ],
+      "projectId": null,
+      "openaiApiKeyId": null,
+      "openaiUserId": null,
+      "serviceTier": null,
+      "batch": null
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o",
+      "tokensIn": 2048,
+      "tokensOut": 512,
+      "costEstimate": 0,
+      "sources": [
+        "bucket:data:dual"
+      ],
+      "projectId": "proj_alpha",
+      "openaiApiKeyId": "key_alpha",
+      "openaiUserId": "user_alpha",
+      "serviceTier": "standard",
+      "batch": false
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o",
+      "tokensIn": 1024,
+      "tokensOut": 256,
+      "costEstimate": 0,
+      "sources": [
+        "bucket:data:dual"
+      ],
+      "projectId": "proj_beta",
+      "openaiApiKeyId": "key_beta",
+      "openaiUserId": "user_beta",
+      "serviceTier": "scale",
+      "batch": true
+    }
+  ],
+  "metadataBuckets": [
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o-mini",
+      "projectId": "proj_abc123",
+      "openaiApiKeyId": null,
+      "openaiUserId": null,
+      "serviceTier": null,
+      "batch": null,
+      "tokensIn": 2849,
+      "tokensOut": 912,
+      "costEstimate": 0.003918,
+      "sources": [
+        "bucket:data:primary"
+      ]
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o-mini",
+      "projectId": null,
+      "openaiApiKeyId": null,
+      "openaiUserId": null,
+      "serviceTier": null,
+      "batch": null,
+      "tokensIn": 2849,
+      "tokensOut": 912,
+      "costEstimate": 0.003918,
+      "sources": [
+        "daily_costs:primary"
+      ]
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o",
+      "projectId": "proj_alpha",
+      "openaiApiKeyId": "key_alpha",
+      "openaiUserId": "user_alpha",
+      "serviceTier": "standard",
+      "batch": false,
+      "tokensIn": 2048,
+      "tokensOut": 512,
+      "costEstimate": 0,
+      "sources": [
+        "bucket:data:dual"
+      ]
+    },
+    {
+      "bucketTimestamp": "2024-09-23T00:00:00.000Z",
+      "model": "gpt-4o",
+      "projectId": "proj_beta",
+      "openaiApiKeyId": "key_beta",
+      "openaiUserId": "user_beta",
+      "serviceTier": "scale",
+      "batch": true,
+      "tokensIn": 1024,
+      "tokensOut": 256,
+      "costEstimate": 0,
+      "sources": [
+        "bucket:data:dual"
       ]
     }
   ],
@@ -179,7 +293,10 @@
     "missingCertificateIds": []
   },
   "foreignKeyIssues": {
-    "unknownProjects": [],
+    "unknownProjects": [
+      "usage/completions:proj_alpha",
+      "usage/completions:proj_beta"
+    ],
     "unknownServiceAccounts": [],
     "unknownServiceAccountKeys": [],
     "unknownCertificates": []

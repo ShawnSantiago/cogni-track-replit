@@ -1,23 +1,29 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useId } from 'react';
+import React, { useState, useEffect, useMemo, useId, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
 
-interface FilterOptions {
+export interface UsageFilterOptions {
   dateRange: {
     start: string;
     end: string;
   };
   providers: string[];
   models: string[];
+  projects: string[];
+  apiKeys: string[];
+  serviceTiers: string[];
 }
 
 interface AdvancedFiltersProps {
-  filters: FilterOptions;
-  onFiltersChange: (filters: FilterOptions) => void;
+  filters: UsageFilterOptions;
+  onFiltersChange: (filters: UsageFilterOptions) => void;
   availableProviders: string[];
   availableModels: string[];
+  availableProjects: string[];
+  availableApiKeys: string[];
+  availableServiceTiers: string[];
   className?: string;
 }
 
@@ -26,14 +32,18 @@ export default function AdvancedFilters({
   onFiltersChange,
   availableProviders,
   availableModels,
+  availableProjects,
+  availableApiKeys,
+  availableServiceTiers,
   className
 }: AdvancedFiltersProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [draftFilters, setDraftFilters] = useState<FilterOptions>(filters);
+  const [draftFilters, setDraftFilters] = useState<UsageFilterOptions>(filters);
   const [actionStatus, setActionStatus] = useState<'idle' | 'applied' | 'cleared'>('idle');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const panelId = useId();
   const headingId = `${panelId}-heading`;
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setDraftFilters(filters);
@@ -61,6 +71,15 @@ export default function AdvancedFilters({
     return () => window.clearTimeout(timer);
   }, [isExpanded, lastUpdatedAt]);
 
+  useEffect(() => {
+    if (isExpanded) {
+      // Move focus to the panel region when it expands
+      setTimeout(() => {
+        panelRef.current?.focus();
+      }, 0);
+    }
+  }, [isExpanded]);
+
   const hasPendingChanges = useMemo(() => {
     const datesMatch =
       draftFilters.dateRange.start === filters.dateRange.start &&
@@ -71,9 +90,30 @@ export default function AdvancedFilters({
     const modelsMatch =
       draftFilters.models.length === filters.models.length &&
       draftFilters.models.every(model => filters.models.includes(model));
+    const projectsMatch =
+      draftFilters.projects.length === filters.projects.length &&
+      draftFilters.projects.every(project => filters.projects.includes(project));
+    const apiKeysMatch =
+      draftFilters.apiKeys.length === filters.apiKeys.length &&
+      draftFilters.apiKeys.every(apiKey => filters.apiKeys.includes(apiKey));
+    const serviceTiersMatch =
+      draftFilters.serviceTiers.length === filters.serviceTiers.length &&
+      draftFilters.serviceTiers.every(tier => filters.serviceTiers.includes(tier));
 
-    return !(datesMatch && providersMatch && modelsMatch);
+    return !(datesMatch && providersMatch && modelsMatch && projectsMatch && apiKeysMatch && serviceTiersMatch);
   }, [draftFilters, filters]);
+
+  const dateError = useMemo(() => {
+    const { start, end } = draftFilters.dateRange;
+    if (start && end) {
+      const s = new Date(start);
+      const e = new Date(end);
+      if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && s > e) {
+        return 'End date must be on or after start date.';
+      }
+    }
+    return null;
+  }, [draftFilters.dateRange]);
 
   const handleDateChange = (field: 'start' | 'end', value: string) => {
     setDraftFilters(prev => ({
@@ -111,14 +151,56 @@ export default function AdvancedFilters({
     });
   };
 
+  const handleProjectToggle = (projectId: string) => {
+    setDraftFilters(prev => {
+      const nextProjects = prev.projects.includes(projectId)
+        ? prev.projects.filter(project => project !== projectId)
+        : [...prev.projects, projectId];
+
+      return {
+        ...prev,
+        projects: nextProjects
+      };
+    });
+  };
+
+  const handleApiKeyToggle = (apiKeyId: string) => {
+    setDraftFilters(prev => {
+      const nextApiKeys = prev.apiKeys.includes(apiKeyId)
+        ? prev.apiKeys.filter(key => key !== apiKeyId)
+        : [...prev.apiKeys, apiKeyId];
+
+      return {
+        ...prev,
+        apiKeys: nextApiKeys
+      };
+    });
+  };
+
+  const handleServiceTierToggle = (serviceTier: string) => {
+    setDraftFilters(prev => {
+      const nextServiceTiers = prev.serviceTiers.includes(serviceTier)
+        ? prev.serviceTiers.filter(tier => tier !== serviceTier)
+        : [...prev.serviceTiers, serviceTier];
+
+      return {
+        ...prev,
+        serviceTiers: nextServiceTiers
+      };
+    });
+  };
+
   const clearAllFilters = () => {
-    const clearedFilters: FilterOptions = {
+    const clearedFilters: UsageFilterOptions = {
       dateRange: {
         start: '',
         end: ''
       },
       providers: [],
-      models: []
+      models: [],
+      projects: [],
+      apiKeys: [],
+      serviceTiers: []
     };
 
     setDraftFilters(clearedFilters);
@@ -139,7 +221,10 @@ export default function AdvancedFilters({
         end: draftFilters.dateRange.end
       },
       providers: [...draftFilters.providers],
-      models: [...draftFilters.models]
+      models: [...draftFilters.models],
+      projects: [...draftFilters.projects],
+      apiKeys: [...draftFilters.apiKeys],
+      serviceTiers: [...draftFilters.serviceTiers]
     });
     setActionStatus('applied');
     setLastUpdatedAt(Date.now());
@@ -149,7 +234,10 @@ export default function AdvancedFilters({
     (filters.dateRange.start ? 1 : 0) +
     (filters.dateRange.end ? 1 : 0) +
     filters.providers.length +
-    filters.models.length;
+    filters.models.length +
+    filters.projects.length +
+    filters.apiKeys.length +
+    filters.serviceTiers.length;
 
   const chipBaseClasses =
     'rounded-full border px-3 py-1 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
@@ -188,6 +276,8 @@ export default function AdvancedFilters({
         role="region"
         aria-labelledby={headingId}
         hidden={!isExpanded}
+        ref={panelRef}
+        tabIndex={-1}
         className="border-t border-border px-4 py-5"
       >
         {/* Date Range */}
@@ -200,6 +290,8 @@ export default function AdvancedFilters({
                 type="date"
                 value={draftFilters.dateRange.start}
                 onChange={(e) => handleDateChange('start', e.target.value)}
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? `${panelId}-date-error` : undefined}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
@@ -209,11 +301,18 @@ export default function AdvancedFilters({
                 type="date"
                 value={draftFilters.dateRange.end}
                 onChange={(e) => handleDateChange('end', e.target.value)}
+                aria-invalid={Boolean(dateError)}
+                aria-describedby={dateError ? `${panelId}-date-error` : undefined}
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
           </div>
         </div>
+        {dateError && (
+          <p id={`${panelId}-date-error`} className="mt-2 text-sm text-destructive" role="alert">
+            {dateError}
+          </p>
+        )}
 
         {/* Providers */}
         {availableProviders.length > 0 && (
@@ -278,6 +377,90 @@ export default function AdvancedFilters({
           </div>
         )}
 
+        {availableProjects.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <label className="text-sm font-medium">Projects</label>
+            <div className="flex flex-wrap gap-2">
+              {availableProjects.map(projectId => {
+                const isActive = draftFilters.projects.includes(projectId);
+
+                return (
+                  <button
+                    key={projectId}
+                    type="button"
+                    onClick={() => handleProjectToggle(projectId)}
+                    aria-pressed={isActive}
+                    className={cn(
+                      chipBaseClasses,
+                      isActive
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/80'
+                    )}
+                  >
+                    {projectId}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {availableApiKeys.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <label className="text-sm font-medium">API keys</label>
+            <div className="flex flex-wrap gap-2">
+              {availableApiKeys.map(apiKeyId => {
+                const isActive = draftFilters.apiKeys.includes(apiKeyId);
+
+                return (
+                  <button
+                    key={apiKeyId}
+                    type="button"
+                    onClick={() => handleApiKeyToggle(apiKeyId)}
+                    aria-pressed={isActive}
+                    className={cn(
+                      chipBaseClasses,
+                      isActive
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/80'
+                    )}
+                  >
+                    {apiKeyId}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {availableServiceTiers.length > 0 && (
+          <div className="mt-6 space-y-2">
+            <label className="text-sm font-medium">Service tiers</label>
+            <div className="flex flex-wrap gap-2">
+              {availableServiceTiers.map(serviceTier => {
+                const isActive = draftFilters.serviceTiers.includes(serviceTier);
+
+                return (
+                  <button
+                    key={serviceTier}
+                    type="button"
+                    onClick={() => handleServiceTierToggle(serviceTier)}
+                    aria-pressed={isActive}
+                    className={cn(
+                      chipBaseClasses,
+                      isActive
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/80'
+                    )}
+                  >
+                    {serviceTier}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="mt-6 border-t border-border pt-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             {activeFiltersCount > 0 ? (
@@ -295,7 +478,7 @@ export default function AdvancedFilters({
               <button
                 type="button"
                 onClick={applyFilters}
-                disabled={!hasPendingChanges}
+                disabled={!hasPendingChanges || Boolean(dateError)}
                 className={cn(
                   'inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50',
                   hasPendingChanges ? 'bg-primary text-primary-foreground hover:bg-primary/90' : 'bg-muted text-muted-foreground'
@@ -303,7 +486,7 @@ export default function AdvancedFilters({
               >
                 Apply filters
               </button>
-              <div className="min-h-[1.25rem] text-xs text-muted-foreground">
+              <div className="min-h-[1.25rem] text-xs text-muted-foreground" role="status" aria-live="polite" aria-atomic="true">
                 {actionStatus === 'applied' && <span>Filters updated ✓</span>}
                 {actionStatus === 'cleared' && <span>Filters cleared</span>}
                 {actionStatus === 'idle' && !hasPendingChanges && activeFiltersCount > 0 && (

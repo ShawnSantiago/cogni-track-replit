@@ -18,7 +18,9 @@ export function NavMenu() {
   return (
     <nav aria-label="Primary" className="flex items-center gap-4">
       {navigationLinks.map(({ href, label }) => {
-        const isActive = pathname === href;
+        const isActive = href === "/"
+          ? pathname === "/"
+          : pathname === href || pathname.startsWith(`${href}/`);
 
         return (
           <Link

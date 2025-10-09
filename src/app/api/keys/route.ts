@@ -3,6 +3,13 @@ import { auth } from '@clerk/nextjs/server';
 import { eq } from 'drizzle-orm';
 import { getDb, schema } from '../../../lib/database';
 import { encrypt, decrypt } from '../../../lib/encryption';
+import { parseUsageMode, toIsoTimestamp } from '@/lib/provider-key-utils';
+import type {
+  ProviderKeyListResponse,
+  ProviderKeyMutationResponse,
+  ProviderKeySummary,
+  UsageMode,
+} from '@/types/provider-keys';
 
 type ProviderKeyRecord = typeof schema.providerKeys.$inferSelect;
 
@@ -136,14 +143,14 @@ export async function GET() {
       .where(eq(schema.providerKeys.userId, userId));
 
     // Decrypt and mask keys for display
-    const keysWithMasked = providerKeys.map(key => {
+    const keysWithMasked: ProviderKeySummary[] = providerKeys.map((key) => {
       try {
         const decryptedKey = decrypt({
           encryptedText: key.encryptedKey,
           iv: key.iv,
           authTag: key.authTag,
         });
-        
+
         const maskedKey = decryptedKey.length > 8 
           ? `${decryptedKey.slice(0, 4)}...${decryptedKey.slice(-4)}`
           : '****';
@@ -152,8 +159,8 @@ export async function GET() {
           id: key.id,
           provider: key.provider,
           maskedKey,
-          createdAt: key.createdAt,
-          usageMode: (key.usageMode ?? 'standard') as 'standard' | 'admin',
+          createdAt: toIsoTimestamp(key.createdAt),
+          usageMode: parseUsageMode(key.usageMode) ?? 'standard',
           hasOrgConfig: Boolean(key.encryptedMetadata && key.metadataIv && key.metadataAuthTag),
         };
       } catch (error) {
@@ -162,16 +169,28 @@ export async function GET() {
           id: key.id,
           provider: key.provider,
           maskedKey: '****',
-          createdAt: key.createdAt,
-          usageMode: (key.usageMode ?? 'standard') as 'standard' | 'admin',
+          createdAt: toIsoTimestamp(key.createdAt),
+          usageMode: parseUsageMode(key.usageMode) ?? 'standard',
           hasOrgConfig: Boolean(key.encryptedMetadata && key.metadataIv && key.metadataAuthTag),
         };
       }
     });
 
-    return NextResponse.json({ keys: keysWithMasked });
+    return NextResponse.json<ProviderKeyListResponse>({ keys: keysWithMasked });
   } catch (error) {
     console.error('Error fetching provider keys:', error);
+    const anyErr = error as any;
+    const message: string = anyErr?.message ?? "";
+    const code: string | undefined = anyErr?.code;
+
+    // DB-off fallback: if local DB is not running, gracefully return empty list
+    if (code === 'ECONNREFUSED' || message.includes('ECONNREFUSED')) {
+      return NextResponse.json<ProviderKeyListResponse>(
+        { keys: [] },
+        { status: 200, headers: { 'x-db-off': 'true' } }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Failed to fetch provider keys' },
       { status: 500 }
@@ -190,7 +209,7 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
     const body = await request.json();
-    const { provider, apiKey, usageMode = 'standard', organizationId, projectId } = body;
+    const { provider, apiKey, usageMode, organizationId, projectId } = body;
 
     if (!provider || !apiKey) {
       return NextResponse.json(
@@ -214,13 +233,14 @@ export async function POST(request: NextRequest) {
     const normalizedOrgId = trimmedOrgId ? normalizeOrgId(trimmedOrgId) : '';
     const normalizedProjectId = trimmedProjectId ? normalizeProjectId(trimmedProjectId) : '';
 
-    const normalizedUsageMode = (typeof usageMode === 'string' ? usageMode.toLowerCase() : 'standard') as 'standard' | 'admin';
-    if (!['standard', 'admin'].includes(normalizedUsageMode)) {
+    const parsedUsageMode = parseUsageMode(usageMode);
+    if (usageMode !== undefined && parsedUsageMode === null) {
       return NextResponse.json(
         { error: 'usageMode must be either "standard" or "admin"' },
         { status: 400 }
       );
     }
+    const normalizedUsageMode: UsageMode = parsedUsageMode ?? 'standard';
 
     if (normalizedUsageMode === 'admin' && normalizedProvider !== 'openai') {
       return NextResponse.json(
@@ -266,17 +286,18 @@ export async function POST(request: NextRequest) {
         metadataIv: metadataEncryption?.iv ?? null,
         metadataAuthTag: metadataEncryption?.authTag ?? null,
       })
-      .returning({
-        id: schema.providerKeys.id,
-        provider: schema.providerKeys.provider,
-        createdAt: schema.providerKeys.createdAt,
-        usageMode: schema.providerKeys.usageMode,
-      });
+      .returning();
 
-    return NextResponse.json({ 
+    if (!newKey) {
+      return NextResponse.json({ error: 'Failed to create provider key' }, { status: 500 });
+    }
+
+    return NextResponse.json<ProviderKeyMutationResponse>({ 
       key: {
-        ...newKey,
-        usageMode: (newKey.usageMode ?? 'standard') as 'standard' | 'admin',
+        id: newKey.id,
+        provider: newKey.provider,
+        createdAt: toIsoTimestamp(newKey.createdAt),
+        usageMode: normalizedUsageMode,
         hasOrgConfig: Boolean(metadataEncryption),
       },
       message: 'API key added successfully'

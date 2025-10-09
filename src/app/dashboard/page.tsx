@@ -10,24 +10,16 @@ import KeyCard from '@/components/KeyCard';
 import AddKeyForm from '@/components/AddKeyForm';
 import EditKeyForm from '@/components/EditKeyForm';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-
-interface ProviderKey {
-  id: number;
-  provider: string;
-  maskedKey?: string;
-  createdAt: string;
-  usageMode?: 'standard' | 'admin';
-  hasOrgConfig?: boolean;
-}
+import type { ProviderKeyListResponse, ProviderKeySummary, UsageMode } from '@/types/provider-keys';
 
 export default function DashboardPage() {
   const { user, isLoaded } = useSafeUser();
   const clerkConfigured = useIsClerkConfigured();
   const router = useRouter();
-  const [keys, setKeys] = useState<ProviderKey[]>([]);
+  const [keys, setKeys] = useState<ProviderKeySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingKey, setEditingKey] = useState<ProviderKey | null>(null);
+  const [editingKey, setEditingKey] = useState<ProviderKeySummary | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [isEditing, setIsEditingState] = useState(false);
   const [error, setError] = useState('');
@@ -51,7 +43,7 @@ export default function DashboardPage() {
       if (!response.ok) {
         throw new Error('Failed to load API keys');
       }
-      const data = await response.json();
+      const data: ProviderKeyListResponse = await response.json();
       setKeys(data.keys || []);
       setError('');
     } catch (err) {
@@ -65,7 +57,7 @@ export default function DashboardPage() {
   const handleAddKey = async (payload: {
     provider: string;
     apiKey: string;
-    usageMode: 'standard' | 'admin';
+    usageMode: UsageMode;
     organizationId?: string;
     projectId?: string;
   }) => {
@@ -102,7 +94,7 @@ export default function DashboardPage() {
     keyId: number,
     payload: {
       apiKey?: string;
-      usageMode: 'standard' | 'admin';
+      usageMode: UsageMode;
       organizationId?: string;
       projectId?: string;
     }

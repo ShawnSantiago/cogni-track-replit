@@ -3,6 +3,12 @@ import { auth } from '@clerk/nextjs/server';
 import { eq, and } from 'drizzle-orm';
 import { getDb, schema } from '../../../../lib/database';
 import { encrypt, decrypt } from '../../../../lib/encryption';
+import { parseUsageMode, toIsoTimestamp } from '@/lib/provider-key-utils';
+import type {
+  ProviderKeyGetResponse,
+  ProviderKeyMutationResponse,
+  UsageMode,
+} from '@/types/provider-keys';
 
 type RouteParams = Record<string, string | string[]>;
 type ProviderKeyInsert = typeof schema.providerKeys.$inferInsert;
@@ -103,13 +109,13 @@ export async function GET(
       ? `${decryptedKey.slice(0, 4)}...${decryptedKey.slice(-4)}`
       : '****';
 
-    return NextResponse.json({
+    return NextResponse.json<ProviderKeyGetResponse>({
       key: {
         id: providerKey.id,
         provider: providerKey.provider,
         maskedKey,
-        createdAt: providerKey.createdAt,
-        usageMode: (providerKey.usageMode ?? 'standard') as 'standard' | 'admin',
+        createdAt: toIsoTimestamp(providerKey.createdAt),
+        usageMode: parseUsageMode(providerKey.usageMode) ?? 'standard',
         hasOrgConfig: Boolean(providerKey.encryptedMetadata && providerKey.metadataIv && providerKey.metadataAuthTag),
       }
     });
@@ -158,15 +164,16 @@ export async function PUT(
       return NextResponse.json({ error: 'Provider key not found' }, { status: 404 });
     }
 
-    const normalizedUsageMode =
-      typeof usageMode === 'string' ? (usageMode.toLowerCase() as 'standard' | 'admin') : existingKey.usageMode;
-
-    if (!['standard', 'admin'].includes(normalizedUsageMode)) {
+    const requestedUsageMode = parseUsageMode(usageMode);
+    if (usageMode !== undefined && requestedUsageMode === null) {
       return NextResponse.json(
         { error: 'usageMode must be either "standard" or "admin"' },
         { status: 400 }
       );
     }
+
+    const persistedUsageMode = parseUsageMode(existingKey.usageMode) ?? 'standard';
+    const normalizedUsageMode: UsageMode = requestedUsageMode ?? persistedUsageMode;
 
     if (normalizedUsageMode === 'admin' && existingKey.provider !== 'openai') {
       return NextResponse.json(
@@ -228,19 +235,20 @@ export async function PUT(
           eq(schema.providerKeys.userId, userId)
         )
       )
-      .returning({
-        id: schema.providerKeys.id,
-        provider: schema.providerKeys.provider,
-        createdAt: schema.providerKeys.createdAt,
-        usageMode: schema.providerKeys.usageMode,
-      });
+      .returning();
+
+    if (!updatedKey) {
+      return NextResponse.json({ error: 'Failed to update provider key' }, { status: 500 });
+    }
 
     const message = trimmedApiKey ? 'API key updated successfully' : 'Provider key settings updated successfully';
 
-    return NextResponse.json({ 
+    return NextResponse.json<ProviderKeyMutationResponse>({ 
       key: {
-        ...updatedKey,
-        usageMode: (updatedKey.usageMode ?? 'standard') as 'standard' | 'admin',
+        id: updatedKey.id,
+        provider: updatedKey.provider,
+        createdAt: toIsoTimestamp(updatedKey.createdAt),
+        usageMode: normalizedUsageMode,
         hasOrgConfig: normalizedUsageMode === 'admin',
       },
       message,

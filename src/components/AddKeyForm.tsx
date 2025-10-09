@@ -13,8 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-
-type UsageMode = 'standard' | 'admin';
+import type { UsageMode } from '@/types/provider-keys';
 
 interface AddKeyPayload {
   provider: string;

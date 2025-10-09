@@ -1,12 +1,10 @@
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
+
+type UsageEvent = UsageEventWithMetadata;
+
+const getEventDate = (event: UsageEvent) => new Date(event.windowStart ?? event.timestamp);
+
+const formatIsoString = (value: string | null) => (value ? new Date(value).toISOString() : '');
 
 interface ExportOptions {
   filename?: string;
@@ -24,7 +22,7 @@ export function exportUsageToCSV(events: UsageEvent[], options: ExportOptions = 
 
   if (options.dateRange) {
     filteredEvents = filteredEvents.filter(event => {
-      const eventDate = new Date(event.timestamp);
+      const eventDate = getEventDate(event);
       return eventDate >= options.dateRange!.start && eventDate <= options.dateRange!.end;
     });
   }
@@ -43,6 +41,8 @@ export function exportUsageToCSV(events: UsageEvent[], options: ExportOptions = 
 
   // Generate CSV content
   const headers = [
+    'Window Start',
+    'Window End',
     'Timestamp',
     'Provider',
     'Model',
@@ -50,7 +50,24 @@ export function exportUsageToCSV(events: UsageEvent[], options: ExportOptions = 
     'Output Tokens',
     'Total Tokens',
     'Cost Estimate (USD)',
-    'Event ID'
+    'Event ID',
+    'Project ID',
+    'OpenAI API Key ID',
+    'OpenAI User ID',
+    'Service Tier',
+    'Batch',
+    'Num Model Requests',
+    'Input Cached Tokens',
+    'Input Uncached Tokens',
+    'Input Text Tokens',
+    'Output Text Tokens',
+    'Input Cached Text Tokens',
+    'Input Audio Tokens',
+    'Input Cached Audio Tokens',
+    'Output Audio Tokens',
+    'Input Image Tokens',
+    'Input Cached Image Tokens',
+    'Output Image Tokens'
   ];
 
   const csvRows = [
@@ -62,6 +79,8 @@ export function exportUsageToCSV(events: UsageEvent[], options: ExportOptions = 
       const cost = parseFloat(event.costEstimate || '0');
       
       return [
+        `"${formatIsoString(event.windowStart)}"`,
+        `"${formatIsoString(event.windowEnd)}"`,
         `"${new Date(event.timestamp).toISOString()}"`,
         `"${event.provider}"`,
         `"${event.model}"`,
@@ -69,7 +88,24 @@ export function exportUsageToCSV(events: UsageEvent[], options: ExportOptions = 
         outputTokens,
         totalTokens,
         cost.toFixed(6),
-        event.id
+        event.id,
+        `"${event.projectId ?? ''}"`,
+        `"${event.openaiApiKeyId ?? ''}"`,
+        `"${event.openaiUserId ?? ''}"`,
+        `"${event.serviceTier ?? ''}"`,
+        event.batch === null ? '' : event.batch ? 'true' : 'false',
+        event.numModelRequests ?? '',
+        event.inputCachedTokens ?? '',
+        event.inputUncachedTokens ?? '',
+        event.inputTextTokens ?? '',
+        event.outputTextTokens ?? '',
+        event.inputCachedTextTokens ?? '',
+        event.inputAudioTokens ?? '',
+        event.inputCachedAudioTokens ?? '',
+        event.outputAudioTokens ?? '',
+        event.inputImageTokens ?? '',
+        event.inputCachedImageTokens ?? '',
+        event.outputImageTokens ?? ''
       ].join(',');
     })
   ];
@@ -103,7 +139,7 @@ export function exportUsageSummaryToCSV(events: UsageEvent[], options: ExportOpt
 
   if (options.dateRange) {
     filteredEvents = filteredEvents.filter(event => {
-      const eventDate = new Date(event.timestamp);
+      const eventDate = getEventDate(event);
       return eventDate >= options.dateRange!.start && eventDate <= options.dateRange!.end;
     });
   }
@@ -119,8 +155,11 @@ export function exportUsageSummaryToCSV(events: UsageEvent[], options: ExportOpt
         totalInputTokens: 0,
         totalOutputTokens: 0,
         totalCost: 0,
-        firstUsed: event.timestamp,
-        lastUsed: event.timestamp
+        firstUsed: event.windowStart ?? event.timestamp,
+        lastUsed: event.windowStart ?? event.timestamp,
+        projects: new Set<string>(),
+        apiKeys: new Set<string>(),
+        serviceTiers: new Set<string>()
       };
     }
 
@@ -128,16 +167,37 @@ export function exportUsageSummaryToCSV(events: UsageEvent[], options: ExportOpt
     acc[key].totalInputTokens += event.tokensIn || 0;
     acc[key].totalOutputTokens += event.tokensOut || 0;
     acc[key].totalCost += parseFloat(event.costEstimate || '0');
-    
-    if (new Date(event.timestamp) < new Date(acc[key].firstUsed)) {
-      acc[key].firstUsed = event.timestamp;
+    if (event.projectId) {
+      acc[key].projects.add(event.projectId);
     }
-    if (new Date(event.timestamp) > new Date(acc[key].lastUsed)) {
-      acc[key].lastUsed = event.timestamp;
+    if (event.openaiApiKeyId) {
+      acc[key].apiKeys.add(event.openaiApiKeyId);
+    }
+    if (event.serviceTier) {
+      acc[key].serviceTiers.add(event.serviceTier);
+    }
+
+    if (getEventDate(event) < new Date(acc[key].firstUsed)) {
+      acc[key].firstUsed = event.windowStart ?? event.timestamp;
+    }
+    if (getEventDate(event) > new Date(acc[key].lastUsed)) {
+      acc[key].lastUsed = event.windowStart ?? event.timestamp;
     }
 
     return acc;
-  }, {} as Record<string, any>);
+  }, {} as Record<string, {
+    provider: string;
+    model: string;
+    requestCount: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCost: number;
+    firstUsed: string;
+    lastUsed: string;
+    projects: Set<string>;
+    apiKeys: Set<string>;
+    serviceTiers: Set<string>;
+  }>);
 
   // Generate summary CSV
   const headers = [
@@ -149,8 +209,11 @@ export function exportUsageSummaryToCSV(events: UsageEvent[], options: ExportOpt
     'Total Tokens',
     'Total Cost (USD)',
     'Average Cost per Request',
-    'First Used',
-    'Last Used'
+    'First Window Start',
+    'Last Window Start',
+    'Projects',
+    'API Keys',
+    'Service Tiers'
   ];
 
   const csvRows = [
@@ -168,8 +231,11 @@ export function exportUsageSummaryToCSV(events: UsageEvent[], options: ExportOpt
         totalTokens,
         item.totalCost.toFixed(6),
         avgCostPerRequest.toFixed(6),
-        `"${new Date(item.firstUsed).toISOString()}"`,
-        `"${new Date(item.lastUsed).toISOString()}"`
+        `"${formatIsoString(item.firstUsed)}"`,
+        `"${formatIsoString(item.lastUsed)}"`,
+        `"${Array.from(item.projects).join('; ')}"`,
+        `"${Array.from(item.apiKeys).join('; ')}"`,
+        `"${Array.from(item.serviceTiers).join('; ')}"`
       ].join(',');
     })
   ];
@@ -208,11 +274,11 @@ export function calculateUsageGrowth(events: UsageEvent[]): {
   const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
   const currentPeriodEvents = events.filter(event => 
-    new Date(event.timestamp) >= thirtyDaysAgo
+    getEventDate(event) >= thirtyDaysAgo
   );
   
   const previousPeriodEvents = events.filter(event => {
-    const eventDate = new Date(event.timestamp);
+    const eventDate = getEventDate(event);
     return eventDate >= sixtyDaysAgo && eventDate < thirtyDaysAgo;
   });
 

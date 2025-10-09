@@ -4,19 +4,10 @@ import React, { useState } from 'react';
 import { exportUsageToCSV, exportUsageSummaryToCSV } from '../lib/csv-export';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-
-interface UsageEvent {
-  id: number;
-  model: string;
-  tokensIn: number | null;
-  tokensOut: number | null;
-  costEstimate: string | null;
-  timestamp: string;
-  provider: string;
-}
+import { UsageEventWithMetadata } from '@/types/usage';
 
 interface ExportControlsProps {
-  events: UsageEvent[];
+  events: UsageEventWithMetadata[];
   className?: string;
 }
 
@@ -75,9 +66,14 @@ export default function ExportControls({ events, className }: ExportControlsProp
       </Button>
 
       {events.length === 0 && (
-        <p className="self-center text-sm text-muted-foreground">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="self-center rounded-md border border-muted-foreground/30 bg-muted/20 px-3 py-2 text-sm text-muted-foreground"
+        >
           No data available for export
-        </p>
+        </div>
       )}
     </div>
   );

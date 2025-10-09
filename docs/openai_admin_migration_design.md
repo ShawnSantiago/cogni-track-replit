@@ -106,7 +106,17 @@ export const openaiAdminCursors = pgTable('openai_admin_cursors', {
 });
 
 export const usageEventUniq = uniqueIndex('usage_admin_bucket_idx')
-  .on(usageEvents.timestamp, usageEvents.model, usageEvents.keyId);
+  .on(
+    usageEvents.keyId,
+    usageEvents.model,
+    usageEvents.windowStart,
+    sql`COALESCE(${usageEvents.projectId}, '')`,
+    sql`COALESCE(${usageEvents.openaiApiKeyId}, '')`,
+    sql`COALESCE(${usageEvents.openaiUserId}, '')`,
+    sql`COALESCE(${usageEvents.serviceTier}, '')`,
+    sql`COALESCE(${usageEvents.batch}, false)`
+  )
+  .where(sql`window_start IS NOT NULL`);
 ```
 
 **Notes**
@@ -114,6 +124,10 @@ export const usageEventUniq = uniqueIndex('usage_admin_bucket_idx')
 - Import helpers: add `jsonb` and `uniqueIndex` from `drizzle-orm/pg-core` in schema module.
 - `usageEventUniq` prevents duplicate inserts when admin buckets replay.
 - `openai_admin_cursors.endpoint` examples: `"usage/completions"`, `"projects"`, `"service_accounts:proj_abc123"`.
+- The dedupe key matches OpenAI grouping dimensions (project, API key, user, tier, batch) so concurrent buckets stay isolated.
+- Optional fields collapse to empty strings/false for uniqueness, ensuring "missing" metadata maps to a single row while still distinguishing populated fields.
+- Upsert statements should target `usage_admin_bucket_idx` to refresh metrics safely.
+- Monitoring: ingestion emits a single `usage_admin_bucket_idx missing; using manual dedupe fallback` warning when the index is absent. Ops should treat repeated warnings (>3/hour) as a cue to apply pending migrations before forecast buckets skew.
 
 ---
 
@@ -163,4 +177,3 @@ Each migration stays additive; no existing data mutated until backfill confidenc
 - Upon approval, generate Drizzle migration scaffolding (`pnpm drizzle-kit generate`) and ensure snapshot matches design.
 
 **Confidence:** 8/10 — Fixtures align with proposed schema, and changes are additive with clear FK graph; pending reviewer answers may adjust cursor key strategy but not core tables.
-
